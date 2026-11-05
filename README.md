@@ -11,7 +11,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed now drives scenarios through the engine. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed drives scenarios through the engine. Sprint 4 (ingestion) in review: adapter interface, synthetic adapter, idempotent RawEvent to Message pipeline, BullMQ queues with retries and dead-letter. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -47,7 +47,8 @@ docker compose up -d   # first run also creates the loopsignal_app DB role
 npm run db:migrate
 npm run db:seed        # idempotent; synthetic users, 2 orgs, 14 scenarios. Users: alice|bob|carol|dave|erin|frank|gina@synthetic.loopsignal.test
 npm run dev        # http://localhost:3000
-npm run worker     # BullMQ worker (no queues yet)
+npm run worker     # BullMQ worker: processes ingest-source jobs
+npm run ingest:synthetic   # queue a sync of the seeded synthetic mailbox (worker must be running)
 ```
 
 Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.

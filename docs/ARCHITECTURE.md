@@ -87,6 +87,28 @@ Analyzer recommendations are untrusted (rule 6). The engine requires a real `Ana
 
 Only `src/modules/lifecycle` writes `TrackedItem`. Two backstops: an ESLint rule bans `trackedItem` writes and the guard flag name everywhere else (tests are exempt; their fixtures open the guard explicitly), and a database trigger rejects inserts and changes to `state`, the four metric timestamps, `reopenCount` and `version` unless the transaction-local flag `app.lifecycle_writer` is on. The engine opens the flag only around its own writes and closes it again. This catches bugs and stray writes; it is not a security boundary, since code holding the app connection could set the flag in raw SQL.
 
+## 4b. Ingestion and queues
+
+```
+BullMQ ingest-source ──► syncSource ──► adapter.fetch (no transaction)
+                                         │
+                       one transaction per page: ingestEvent × N
+                         RawEvent (encrypted, hashed, immutable)
+                         → normalize → Thread / Participant / Message (find-or-create)
+                                         │
+                       enqueue analyze-message per message (deterministic job id)
+                                         │
+                       advance MonitoredSource.cursor (compare-and-set)
+```
+
+- **Adapters** (`integrations`) fetch and normalize only. Provider payloads are untrusted: `normalize` validates with Zod and throws `NormalizationError` carrying a stable code, never content. Only the synthetic adapter exists; Gmail and Chat come in Sprints 11 and 12.
+- **Idempotent at every step.** Raw events dedupe on `(org, provider, externalId)`, messages on `(org, provider, externalMessageId)`, threads and participants on their natural keys. Inserts use `ON CONFLICT DO NOTHING` then read back, so concurrent replays never abort a transaction or duplicate a row. A message re-sent under a new event id is stored as evidence but not duplicated; an event id re-sent with different content keeps the original (`PAYLOAD_CONFLICT`).
+- **Poison events don't block the stream.** A malformed event is stored raw, opens one `SCHEMA_FAILURE` review task, and is counted; it is not retried, because retrying cannot fix it.
+- **No stranded messages.** Per page: ingest in one transaction, enqueue analysis, then advance the cursor. A failure anywhere re-fetches the same page next time; ingestion dedupes and enqueueing is idempotent, so the retry repairs the gap. Concurrent syncs of one source are safe: the cursor moves by compare-and-set and the loser stops.
+- **Queues** (`src/lib/queue`): `ingest-source`, `analyze-message`, each with a `-dead` queue. Job payloads are validated, strict, and carry ids only, so a queue dump exposes no content. Job ids are deterministic (`analyze-<messageId>`), making enqueue idempotent. Defaults: 5 attempts with exponential backoff. A job that exhausts its attempts or throws `UnrecoverableError` is copied to the dead-letter queue with its ids, the error class and code, and attempt count. **Error messages are never stored**: third-party errors can echo content (rule 10).
+- **Workers** (`src/workers`) call module APIs and log structured ids and counts only (`src/lib/log.ts`). `analyze-message` jobs have no consumer until the analyzers land in Sprint 6.
+- **Known limit:** completed jobs linger for an hour, so re-triggering an *identical* job id inside that window is ignored; manual and scheduled triggers use time-based keys, continuations use a cursor hash. The consumer of `analyze-message` must itself be replay-safe, because a replay after the retention window re-queues already-analyzed messages (the engine and the analysis cache are designed for this).
+
 ## 5. AI design
 
 ```ts

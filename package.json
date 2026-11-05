@@ -17,13 +17,16 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:generate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js generate",
-    "db:deploy": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy"
+    "db:deploy": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
+    "ingest:synthetic": "node --env-file-if-exists=.env --import tsx scripts/enqueue-sync.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
+    "bullmq": "^6.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ioredis": "^6.0.0",
     "lucide-react": "^1.69.0",
     "next": "^16.4.5",
     "next-auth": "^5.0.0-beta.32",
