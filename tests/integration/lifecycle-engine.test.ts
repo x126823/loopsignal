@@ -122,6 +122,23 @@ describe("item creation", () => {
 });
 const NOW_PLUS_DAY = Date.UTC(2026, 10, 2);
 
+describe("concurrent item creation", () => {
+  it("reports a lost race as a LifecycleConflictError (not a masked database error) and leaves exactly one item", async () => {
+    const { threadId, messageId } = await createThreadWithMessage(owner, f, "Please help with the synthetic problem.", 0);
+    const create = () => inOrg((tx) => createItem(tx, {
+      organizationId: f.organizationId, teamId: f.teamId, originMessageId: messageId, threadId, title: "Race", occurredAt: tick(), actor: SYSTEM,
+    }, engineOpts));
+    const results = await Promise.allSettled(Array.from({ length: 6 }, create));
+    for (const r of results) {
+      if (r.status === "rejected") expect(r.reason).toBeInstanceOf(LifecycleConflictError);
+      else expect(["CREATED", "EXISTS"]).toContain(r.value.outcome);
+    }
+    expect(results.filter((r) => r.status === "fulfilled" && r.value.outcome === "CREATED")).toHaveLength(1);
+    expect(await owner.trackedItem.count({ where: { threadId } })).toBe(1);
+    expect(await owner.lifecycleEvent.count({ where: { organizationId: f.organizationId, item: { threadId } } })).toBe(1);
+  });
+});
+
 describe("exhaustive transition behavior: every state pair x every actor type", () => {
   const AUTOMATED_ONLY = new Set(["RECEIVED>ACKNOWLEDGED", "RECEIVED>RESPONDED", "ACKNOWLEDGED>RESPONDED", "RECEIVED>IN_PROGRESS", "ACKNOWLEDGED>IN_PROGRESS", "RESPONDED>IN_PROGRESS", "REOPENED>ACKNOWLEDGED", "REOPENED>RESPONDED", "REOPENED>IN_PROGRESS"]);
   const AUTO_OR_HUMAN = new Set(["RESPONDED>RESOLUTION_PROPOSED", "IN_PROGRESS>RESOLUTION_PROPOSED", "RESOLUTION_PROPOSED>IN_PROGRESS"]);

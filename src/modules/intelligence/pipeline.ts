@@ -3,14 +3,14 @@ import { Prisma } from "../../../generated/prisma/client";
 import { decryptField, parseFieldKey } from "@/lib/crypto/fields";
 import { withTenant } from "@/lib/db";
 import { getEnv } from "@/lib/env";
-import { canonicalJson, sha256 } from "@/lib/hash";
 import { log } from "@/lib/log";
 import { DEFAULT_CONFIDENCE_THRESHOLD } from "@/modules/lifecycle";
-import { checkEvidence, forceApproval } from "./guard";
-import { chooseNonce, systemPrompt, userPrompt, type PromptMessage } from "./prompt";
-import { redact } from "./redaction";
+import { execute, prepare, type CoreMessage, type FailureReason } from "./core";
+import type { PromptCandidate } from "./prompt";
 import { analyzerOutputSchema, type AnalyzerDefinition, type EvidenceItem, type RecommendedAction } from "./schemas";
 import type { LLMProvider } from "./types";
+
+export type { FailureReason } from "./core";
 
 export interface AnalyzeRequest {
   organizationId: string;
@@ -19,6 +19,8 @@ export interface AnalyzeRequest {
   /** The message that triggered the analysis. Stored on the AnalysisRun. */
   subjectMessageId: string;
   itemId?: string;
+  /** People the analyzer may choose from (for example team members). Part of the input hash and the untrusted block. */
+  candidates?: PromptCandidate[];
 }
 
 export interface PipelineDeps {
@@ -30,15 +32,6 @@ export interface PipelineDeps {
   now?: () => Date;
   limits?: { maxMessages?: number; maxCharsPerMessage?: number; maxTotalChars?: number };
 }
-
-export type FailureReason =
-  | "SCHEMA_FAILED"
-  | "EVIDENCE_NOT_VERBATIM"
-  | "EVIDENCE_UNKNOWN_MESSAGE"
-  | "MISSING_EVIDENCE"
-  | "REFUSED"
-  | "INPUT_TOO_LARGE"
-  | "MESSAGE_NOT_FOUND";
 
 export type AnalysisOutcome<R> =
   | {
@@ -57,7 +50,6 @@ export type AnalysisOutcome<R> =
   | { outcome: "BUDGET_EXCEEDED"; used: number; budget: number };
 
 const DEFAULT_LIMITS = { maxMessages: 20, maxCharsPerMessage: 20_000, maxTotalChars: 60_000 };
-const MAX_ATTEMPTS = 2; // one call plus one bounded retry on invalid output
 
 /**
  * The guard pipeline every analyzer call goes through. Order matters:
@@ -103,13 +95,10 @@ export async function runAnalyzer<R>(def: AnalyzerDefinition<R>, req: AnalyzeReq
     return persistFailure("INPUT_TOO_LARGE");
   }
 
-  // 3. Redact secrets and sensitive identifiers before anything leaves our boundary.
-  const promptMessages: PromptMessage[] = ordered.map((m) => ({
-    messageId: m.id, direction: m.direction, sentAt: m.sentAt.toISOString(), text: redact(originals.get(m.id)!).text,
-  }));
-
-  // 4. Input hash: identical input, prompt version, provider and model give identical results, so they share a cache entry.
-  const inputHash = sha256(canonicalJson({ analyzer: def.name, promptVersion: def.promptVersion, provider: deps.provider.name, model: deps.provider.model, messages: promptMessages }));
+  // 3-4. Redact, hash and delimit (shared with golden-set evaluation).
+  const coreMessages: CoreMessage[] = ordered.map((m) => ({ id: m.id, direction: m.direction, sentAt: m.sentAt, text: originals.get(m.id)! }));
+  const prepared = prepare(def, coreMessages, req.candidates ?? [], deps.provider, fieldKey);
+  const { inputHash } = prepared;
 
   // 5. Cache.
   const cached = await withTenant({ organizationId }, (tx) =>
@@ -126,50 +115,27 @@ export async function runAnalyzer<R>(def: AnalyzerDefinition<R>, req: AnalyzeReq
     return { outcome: "BUDGET_EXCEEDED", used: loaded.used, budget };
   }
 
-  // 7. Delimit: untrusted content in nonce-tagged blocks, instructions in the system prompt only.
-  const nonce = chooseNonce(fieldKey, inputHash, promptMessages);
-  const system = systemPrompt(def.instructions, def.promptVersion);
-  const user = userPrompt(promptMessages, nonce);
+  // 7-10. Call, validate, guard evidence, force approval.
+  const run = await execute(def, prepared, deps.provider, threshold);
+  if (run.kind === "failed") return persistFailure(run.reason, { tokensIn: run.tokensIn, tokensOut: run.tokensOut }, run.extra);
 
-  // 8. Call, validate, and retry once on invalid output. Refusals and guard failures are final.
-  let tokensIn = 0;
-  let tokensOut = 0;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await deps.provider.complete({ analyzer: def.name, promptVersion: def.promptVersion, system, user, schema: envelope, maxOutputTokens: def.maxOutputTokens ?? 8_192 });
-    tokensIn += res.tokensIn;
-    tokensOut += res.tokensOut;
-
-    if (res.kind === "refusal") return persistFailure("REFUSED", { tokensIn, tokensOut }, { category: res.category });
-
-    const parsed = res.kind === "output" ? envelope.safeParse(res.json) : null;
-    if (!parsed?.success) {
-      if (attempt < MAX_ATTEMPTS) continue;
-      return persistFailure("SCHEMA_FAILED", { tokensIn, tokensOut });
-    }
-
-    // 9. Evidence guard: quotes must be verbatim from the original text of a message we supplied.
-    const problem = checkEvidence(parsed.data, originals);
-    if (problem) return persistFailure(problem, { tokensIn, tokensOut });
-
-    // 10. Force human approval where required, whatever the model said.
-    const out = { ...parsed.data, requiresHumanApproval: forceApproval(parsed.data, threshold) };
-    const saved = await withTenant({ organizationId }, async (tx) => {
-      const { count } = await tx.analysisRun.createMany({
-        data: [{
-          organizationId, analyzer: def.name, itemId: req.itemId ?? null, messageId: req.subjectMessageId, provider: deps.provider.name,
-          model: deps.provider.model, promptVersion: def.promptVersion, inputHash, output: out as unknown as Prisma.InputJsonValue,
-          confidence: out.confidence, evidence: out.evidence as unknown as Prisma.InputJsonValue, recommendedAction: out.recommendedAction,
-          requiresHumanApproval: out.requiresHumanApproval, status: "OK", tokensIn, tokensOut,
-        }],
-        skipDuplicates: true, // a concurrent identical run may have won; use its row
-      });
-      const row = await tx.analysisRun.findUniqueOrThrow({ where: { organizationId_analyzer_inputHash_promptVersion: { organizationId, analyzer: def.name, inputHash, promptVersion: def.promptVersion } } });
-      return { id: row.id, cached: count === 0 };
+  const out = run.output;
+  const { tokensIn, tokensOut } = run;
+  const saved = await withTenant({ organizationId }, async (tx) => {
+    const { count } = await tx.analysisRun.createMany({
+      data: [{
+        organizationId, analyzer: def.name, itemId: req.itemId ?? null, messageId: req.subjectMessageId, provider: deps.provider.name,
+        model: deps.provider.model, promptVersion: def.promptVersion, inputHash, output: out as unknown as Prisma.InputJsonValue,
+        confidence: out.confidence, evidence: out.evidence as unknown as Prisma.InputJsonValue, recommendedAction: out.recommendedAction,
+        requiresHumanApproval: out.requiresHumanApproval, status: "OK", tokensIn, tokensOut,
+      }],
+      skipDuplicates: true, // a concurrent identical run may have won; use its row
     });
-    log("info", "analysis.completed", { organizationId, analyzer: def.name, status: "OK", cached: saved.cached, tokensIn, tokensOut, attempts: attempt });
-    return okOutcome(saved.id, saved.cached, out);
-  }
-  return persistFailure("SCHEMA_FAILED", { tokensIn, tokensOut }); // unreachable; satisfies the compiler
+    const row = await tx.analysisRun.findUniqueOrThrow({ where: { organizationId_analyzer_inputHash_promptVersion: { organizationId, analyzer: def.name, inputHash, promptVersion: def.promptVersion } } });
+    return { id: row.id, cached: count === 0 };
+  });
+  log("info", "analysis.completed", { organizationId, analyzer: def.name, status: "OK", cached: saved.cached, tokensIn, tokensOut, attempts: run.attempts });
+  return okOutcome(saved.id, saved.cached, out);
 }
 
 function okOutcome<R>(id: string, cached: boolean, o: { result: R; confidence: number; evidence: EvidenceItem[]; recommendedAction: RecommendedAction; requiresHumanApproval: boolean }): AnalysisOutcome<R> {
@@ -204,4 +170,13 @@ async function recordFailure<R>(
   });
   log("warn", "analysis.failed", { organizationId: req.organizationId, analyzer: def.name, reason, tokensIn: tokens.tokensIn, tokensOut: tokens.tokensOut });
   return { outcome: "NEEDS_REVIEW", reason, analysisRunId: saved.runId, reviewTaskId: saved.taskId };
+}
+
+/**
+ * Link analysis runs to the item they led to, so that "why is this person the owner?" and "what did the classifier say?"
+ * are answerable from the item. Only runs that are not yet linked are touched.
+ */
+export async function attachRunsToItem(organizationId: string, runIds: string[], itemId: string): Promise<number> {
+  if (runIds.length === 0) return 0;
+  return withTenant({ organizationId }, async (tx) => (await tx.analysisRun.updateMany({ where: { id: { in: runIds }, itemId: null }, data: { itemId } })).count);
 }

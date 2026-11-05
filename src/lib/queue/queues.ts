@@ -1,4 +1,4 @@
-import { Queue, UnrecoverableError, Worker, type Job, type JobsOptions, type Processor, type WorkerOptions } from "bullmq";
+import { DelayedError, Queue, UnrecoverableError, Worker, type Job, type JobsOptions, type Processor, type WorkerOptions } from "bullmq";
 import { getEnv } from "../env";
 import { log } from "../log";
 import { redisConnection } from "./connection";
@@ -99,4 +99,4 @@ export async function closeQueueHub(): Promise<void> {
   shared = undefined;
 }
 
-export { UnrecoverableError };
+export { DelayedError, UnrecoverableError };

@@ -56,11 +56,14 @@ export async function createThreadWithMessage(owner: PrismaClient, f: EngineFixt
   return { threadId: thread.id, messageId: message.id };
 }
 
-export async function createMessage(owner: PrismaClient, f: EngineFixture, threadId: string, text: string, sentAtMin: number) {
+export async function createMessage(
+  owner: PrismaClient, f: EngineFixture, threadId: string, text: string, sentAtMin: number,
+  direction: "INBOUND" | "OUTBOUND" | "INTERNAL" = "INBOUND", sourceId: string = f.sourceId,
+) {
   return owner.message.create({
     data: {
-      organizationId: f.organizationId, monitoredSourceId: f.sourceId, threadId, provider: "SYNTHETIC", externalMessageId: `m-${randomUUID()}`,
-      sentAt: at(sentAtMin), subject: "Synthetic", bodyText: encryptField(text, testKey, `${f.organizationId}:Message.bodyText`), bodyHash: "h", direction: "INBOUND",
+      organizationId: f.organizationId, monitoredSourceId: sourceId, threadId, provider: "SYNTHETIC", externalMessageId: `m-${randomUUID()}`,
+      sentAt: at(sentAtMin), subject: "Synthetic", bodyText: encryptField(text, testKey, `${f.organizationId}:Message.bodyText`), bodyHash: "h", direction,
     },
   });
 }

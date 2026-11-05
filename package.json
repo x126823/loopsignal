@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js generate",
     "db:deploy": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
-    "ingest:synthetic": "node --env-file-if-exists=.env --import tsx scripts/enqueue-sync.ts"
+    "ingest:synthetic": "node --env-file-if-exists=.env --import tsx scripts/enqueue-sync.ts",
+    "golden": "node --env-file-if-exists=.env --import tsx scripts/golden.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
