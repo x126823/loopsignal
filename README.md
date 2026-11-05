@@ -1,3 +1,4 @@
+
 # LoopSignal
 
 AI-powered Communication Accountability and Lifecycle Intelligence Platform.
@@ -50,3 +51,7 @@ npm run worker     # BullMQ worker (no queues yet)
 Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.
 
 `db:migrate` and `db:seed` become useful once the schema lands in Sprint 1–2.
+
+# loopsignal
+LoopSignal is an AI-powered communication accountability platform that monitors authorized email and chat channels, tracks messages from receipt to closure, and flags missed acknowledgments, delayed responses, and overdue actions. With SLA tracking and human-verified accountability, it helps teams improve responsiveness, ownership, and efficiency.
+
