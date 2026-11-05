@@ -6,6 +6,8 @@ import type { LLMProvider } from "../types";
 import { ACK_CASES, SUBSTANTIVE_CASES } from "./data/reply";
 import { INTENT_CASES } from "./data/intent";
 import { OWNERSHIP_CASES } from "./data/ownership";
+import { PROGRESS_CASES } from "./data/progress";
+import { RESOLUTION_CASES } from "./data/resolution";
 import type { GoldenCase } from "./types";
 
 export const GOLDEN_SETS: Record<AnalyzerName, ReadonlyArray<GoldenCase<Record<string, unknown>>>> = {
@@ -13,12 +15,18 @@ export const GOLDEN_SETS: Record<AnalyzerName, ReadonlyArray<GoldenCase<Record<s
   ownership_resolver: OWNERSHIP_CASES,
   acknowledgment_detector: ACK_CASES,
   substantive_response: SUBSTANTIVE_CASES,
+  progress_analyzer: PROGRESS_CASES,
+  resolution_analyzer: RESOLUTION_CASES,
 };
 
 /** The one field of each analyzer's result that the golden label is about. */
 const KEY: Record<AnalyzerName, string> = {
   intent_classifier: "actionable", ownership_resolver: "ownerUserId", acknowledgment_detector: "isAcknowledgment", substantive_response: "isSubstantive",
+  progress_analyzer: "isProgress", resolution_analyzer: "signal",
 };
+
+/** "Positive" means the analyzer found something: true, a named owner, or any resolution signal other than "none". */
+const isPositive = (v: unknown) => v !== false && v !== null && v !== "none";
 
 export interface CaseRow {
   id: string;
@@ -64,7 +72,7 @@ async function runSet(name: AnalyzerName, provider: LLMProvider, secret: Buffer,
     if (run.kind === "failed") {
       rows.push({ id: gc.id, expected, predicted: null, abstainedBecause: run.reason, confidence: null, correct: false });
       // An abstained positive was not found automatically (a human would have to), so it counts as missed for recall.
-      if (expected !== false && expected !== null) fn++;
+      if (isPositive(expected)) fn++;
       continue;
     }
     const predicted = (run.output.result as Record<string, unknown>)[KEY[name]];
@@ -73,8 +81,8 @@ async function runSet(name: AnalyzerName, provider: LLMProvider, secret: Buffer,
     const correct = valid && predicted === expected;
     rows.push({ id: gc.id, expected, predicted: valid ? predicted : "INVALID_CANDIDATE", abstainedBecause: null, confidence: run.output.confidence, correct });
 
-    const positiveExpected = expected !== false && expected !== null;
-    const positivePredicted = predicted !== false && predicted !== null;
+    const positiveExpected = isPositive(expected);
+    const positivePredicted = isPositive(predicted);
     if (positivePredicted && correct) tp++;
     else if (positivePredicted) fp++;
     if (positiveExpected && !correct) fn++;

@@ -180,3 +180,24 @@ export async function attachRunsToItem(organizationId: string, runIds: string[],
   if (runIds.length === 0) return 0;
   return withTenant({ organizationId }, async (tx) => (await tx.analysisRun.updateMany({ where: { id: { in: runIds }, itemId: null }, data: { itemId } })).count);
 }
+
+export interface ItemAnalysisView {
+  id: string;
+  analyzer: string;
+  recommendedAction: string | null;
+  confidence: number | null;
+  requiresHumanApproval: boolean;
+  evidence: Array<{ messageId: string; quote: string }>;
+  createdAt: Date;
+}
+
+/** Accepted analyses linked to an item, newest first: what the AI recommended and the verbatim quotes it cited. Read-only. */
+export async function listItemAnalysis(organizationId: string, itemId: string, limit = 30): Promise<ItemAnalysisView[]> {
+  return withTenant({ organizationId }, async (tx) => {
+    const runs = await tx.analysisRun.findMany({ where: { itemId, status: "OK" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit });
+    return runs.map((r) => ({
+      id: r.id, analyzer: r.analyzer, recommendedAction: r.recommendedAction, confidence: r.confidence, requiresHumanApproval: r.requiresHumanApproval, createdAt: r.createdAt,
+      evidence: Array.isArray(r.evidence) ? (r.evidence as Array<{ messageId?: unknown; quote?: unknown }>).flatMap((e) => (typeof e?.quote === "string" && typeof e?.messageId === "string" ? [{ messageId: e.messageId, quote: e.quote }] : [])) : [],
+    }));
+  });
+}

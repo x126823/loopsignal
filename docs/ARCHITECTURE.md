@@ -109,6 +109,18 @@ BullMQ ingest-source ──► syncSource ──► adapter.fetch (no transactio
 - **Workers** (`src/workers`) call module APIs and log structured ids and counts only (`src/lib/log.ts`). `analyze-message` jobs have no consumer until the analyzers land in Sprint 6.
 - **Known limit:** completed jobs linger for an hour, so re-triggering an *identical* job id inside that window is ignored; manual and scheduled triggers use time-based keys, continuations use a cursor hash. The consumer of `analyze-message` must itself be replay-safe, because a replay after the retention window re-queues already-analyzed messages (the engine and the analysis cache are designed for this).
 
+## 4c. Human decisions (the web UI, Sprint 7)
+
+Pages: sign-in (`/login`), Approvals (what is waiting for a person), Items, an item page (decisions, conversation, history, the four metrics, AI recommendations, ownership) and the Review queue. Built with hand-rolled shadcn-style primitives on Tailwind and `class-variance-authority`; no component-library dependency.
+
+**Security model.** Server functions can be POSTed to directly, and layouts do not re-render on navigation, so protection is not left to a layout or the proxy. Every page and every server action calls `requireContext()` (`src/app/_lib/session.ts`), which resolves the user and their role **from the database** on each request, never from the token. The active organization is a cookie that is validated against the user's real memberships every time. Every server action then (1) validates its form with Zod and treats hidden fields (ids, expected version) as untrusted, (2) calls the lifecycle engine, which independently re-checks legality and permission with the same `can()` as everywhere else, and (3) reports the result through a fixed vocabulary of notice keys, so a URL can never make the page display arbitrary text. The buttons shown come from `availableTransitions`, built from the engine's own transition table and `can()`, so the UI cannot offer what the engine would refuse; an edited form gains nothing (tested in a real browser by changing a form's target state to CONFIRM as a member whom the organization requires to be a lead).
+
+**What people can see.** An item and its conversation are visible only to those who pass `item:view` for the item's team (administrators and auditors see all). An item you may not see is a plain 404 with no hint it exists. Message text is decrypted server-side only after that check, is rendered as escaped text, and is never logged. Approvers see the AI's verbatim evidence quotes next to the conversation they come from.
+
+**Decisions.** Confirming and closing are separate, explicit steps, each behind a short form with an optional note, and the four metrics (acknowledged, first substantive response, resolution confirmed, closed) are shown as separate facts. Forms carry the item's version: a form left open while the item moves on is refused rather than overwriting newer work. Assigning an owner closes the item's open `OWNERSHIP` review task in the same transaction. Closing a review task is audited.
+
+**Two things learned the hard way.** (1) Next.js can load the data layer as more than one module copy (separately bundled routes), so the tenant context lives on `globalThis` like the cached client it serves; a module-local store made sign-in fail intermittently. (2) Prisma's generated client is emitted as CommonJS (`moduleFormat = "cjs"`) so it loads under Playwright's runner.
+
 ## 5. AI design
 
 ```ts
@@ -162,6 +174,8 @@ Four analyzers are defined in `src/modules/intelligence/analyzers.ts` (each a na
 | ownership_resolver | Does the message explicitly name exactly one team member? | `ownerUserId` (a candidate id or null) |
 | acknowledgment_detector | Is our reply only an acknowledgment? | `isAcknowledgment` |
 | substantive_response | Does our reply engage with the content? | `isSubstantive` |
+| progress_analyzer | Does our reply report work underway? | `isProgress` |
+| resolution_analyzer | Is the matter claimed fixed, confirmed or rejected? | `signal`: `resolved_by_us`, `confirmed_by_customer`, `rejected_by_customer`, `none` |
 
 No free text is ever stored from a model: the item title is the message's own subject, and results are enums, booleans and ids. Ownership candidates are sent as a name and a mention handle only (never an email address) inside the untrusted block.
 
@@ -172,6 +186,8 @@ No free text is ever stored from a model: the item title is the message's own su
 - *Ownership is assigned only at creation, and only if* the recommendation is `ASSIGN_OWNER`, the id is a real team member, confidence cleared the threshold, the evidence is the message itself, and the quoted phrase contains that person's handle or first name. Anything else queues an `OWNERSHIP` review task for a human. After creation only humans change the owner.
 
 **Decision rules that hold whatever the model says** (pure functions, tested exhaustively): a message from the outside (INBOUND) can never be our acknowledgment or response; an acknowledgment's or response's evidence must cite the message itself; a reply is RESPONDED only if substantive **and not** an acknowledgment, ACKNOWLEDGED only if an acknowledgment **and not** substantive; if both analyzers say yes they contradict each other and nothing moves, a human looks (a premature RESPONDED would flatter the response-time metric); a recommendation whose action does not match its own result is ignored. Timestamps are when messages were *sent*, not processed.
+
+**Progress and resolution (Sprint 7).** Our reply on an item moves through stages, each re-reading the item, so one message can legitimately advance several steps: (1) acknowledgment versus substantive response, then (2) a claimed fix, which makes the item `RESOLUTION_PROPOSED` (a proposal, not a resolution), or else a status update, which makes it `IN_PROGRESS` (only from `RESPONDED`, so the acknowledgment and response metrics are never skipped). A customer message while a resolution is proposed is classified too: a rejection sends the item back to `IN_PROGRESS`, and a confirmation is **only ever a suggestion**: the engine queues an approval and the item stays `RESOLUTION_PROPOSED` until a person decides (rule 2). The rules in `analysis-plan.ts` accept each signal only from the right side (only our message can claim a fix; only the customer's INBOUND message can confirm or reject), only in the right state, with the action matching the signal, and with the evidence being the message itself.
 
 **Job ordering.** Jobs for one thread run concurrently and in any order. A reply processed before its item existed would otherwise be lost, so once an item is created the worker evaluates the thread's later replies in order. Every step is idempotent (cached analyses, idempotent engine calls), so replays and duplicates change nothing.
 

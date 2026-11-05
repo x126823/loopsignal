@@ -50,7 +50,7 @@ export default defineConfig([
   // tests are exempt because their fixtures open the guard explicitly.)
   {
     files: ["**/*.{ts,tsx,mts,mjs}"],
-    ignores: ["src/modules/lifecycle/**", "tests/**", "eslint.config.mjs"],
+    ignores: ["src/modules/lifecycle/**", "tests/**", "e2e/**", "eslint.config.mjs"],
     rules: {
       "no-restricted-syntax": [
         "error",

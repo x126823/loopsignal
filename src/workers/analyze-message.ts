@@ -3,13 +3,14 @@ import type { Job } from "bullmq";
 import { log } from "@/lib/log";
 import { listThreadMessageRefs, loadMessageContext } from "@/modules/ingestion";
 import {
-  acknowledgmentDetector, attachRunsToItem, intentClassifier, ownershipResolver, ProviderError, runAnalyzer, substantiveResponseAnalyzer, transitionTarget,
+  acknowledgmentDetector, attachRunsToItem, intentClassifier, ownershipResolver, progressAnalyzer, ProviderError, resolutionAnalyzer, runAnalyzer, substantiveResponseAnalyzer, transitionTarget,
   type AnalysisOutcome, type AnalyzerDefinition, type LLMProvider, type PipelineDeps,
 } from "@/modules/intelligence";
 import { createItem, findThreadItem, propose, queueReviewTask, type EngineOptions, type Outcome } from "@/modules/lifecycle";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { withTenant } from "@/lib/db";
-import { acceptedOwner, decideReply, nextBudgetWindow, shouldTrack, type Ok } from "./analysis-plan";
+import { acceptedOwner, decideProgress, decideReply, decideResolution, nextBudgetWindow, shouldTrack, type Ok } from "./analysis-plan";
+import type { ItemState } from "../../generated/prisma/enums";
 
 export interface AnalyzeDeps {
   provider: LLMProvider;
@@ -24,7 +25,9 @@ export type AnalyzeSummary =
   | { status: "ITEM_CREATED"; itemId: string; ownerAssigned: boolean; caughtUp: number }
   | { status: "ITEM_EXISTS"; itemId: string }
   | { status: "REOPEN_SUGGESTED"; itemId: string }
-  | { status: "ACKNOWLEDGED" | "RESPONDED"; itemId: string }
+  | { status: "ACKNOWLEDGED" | "RESPONDED" | "IN_PROGRESS" | "RESOLUTION_PROPOSED"; itemId: string }
+  /** A customer message looks like a confirmation. Only a suggestion: an approval is queued for a human. */
+  | { status: "CONFIRMATION_SUGGESTED"; itemId: string }
   | { status: "NO_CHANGE"; itemId: string }
   | { status: "NEEDS_REVIEW"; reason: string }
   /** The organization's LLM budget is spent. The job is delayed until the window rolls over. */
@@ -78,35 +81,86 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
     };
     const asAnalyzer = (name: string, out: Ok<unknown>) => ({ type: "ANALYZER" as const, analyzer: name, analysisRunId: out.analysisRunId });
 
-    // A reply from our side on an open item: acknowledgment versus substantive response.
-    if (open && ctx.direction !== "INBOUND") {
-      if (open.state !== "RECEIVED" && open.state !== "ACKNOWLEDGED" && open.state !== "REOPENED") return { status: "SKIPPED", reason: "ITEM_NOT_AWAITING_REPLY" };
-      const ids = [...new Set([open.originMessageId, id])];
-      const sub = await run(substantiveResponseAnalyzer, ids, { itemId: open.id });
-      const ack = open.state === "ACKNOWLEDGED" ? null : await run(acknowledgmentDetector, ids, { itemId: open.id });
-      for (const o of [sub, ack]) if (o && o.outcome === "NEEDS_REVIEW") return { status: "NEEDS_REVIEW", reason: o.reason };
-
-      const subOk = sub.outcome === "OK" ? sub : null;
-      const ackOk = ack && ack.outcome === "OK" ? ack : null;
-      const decision = decideReply(open.state, { id, direction: ctx.direction }, subOk, ackOk);
-      if (decision.kind === "CONTRADICTION") {
-        await queueReviewTask(org, { type: "LOW_CONFIDENCE", refType: "TrackedItem", refId: open.id });
-        log("warn", "analyze.contradiction", { organizationId: org, messageId: id, itemId: open.id });
-        return { status: "NEEDS_REVIEW", reason: "ACK_AND_SUBSTANTIVE_CONTRADICT" };
-      }
-      if (decision.kind === "NONE") return { status: "NO_CHANGE", itemId: open.id };
-
-      const chosen = decision.kind === "RESPONDED" ? subOk! : ackOk!;
-      const to = transitionTarget(chosen.recommendedAction)!;
-      const outcome = await withTenant({ organizationId: org }, (tx) =>
+    const subject = { id, direction: ctx.direction };
+    const proposeAs = async (item: { id: string }, to: ItemState, out: Ok<unknown>, analyzer: string, reason?: string) =>
+      withTenant({ organizationId: org }, (tx) =>
         propose(tx, {
-          organizationId: org, itemId: open.id, to, occurredAt: ctx.sentAt, messageId: id, confidence: chosen.confidence, evidence: chosen.evidence,
-          actor: asAnalyzer(decision.kind === "RESPONDED" ? substantiveResponseAnalyzer.name : acknowledgmentDetector.name, chosen),
+          organizationId: org, itemId: item.id, to, occurredAt: ctx.sentAt, messageId: id, confidence: out.confidence, evidence: out.evidence,
+          ...(reason ? { reason } : {}), actor: asAnalyzer(analyzer, out),
         }, d.engine));
-      return fromEngine(outcome, open.id, decision.kind);
+
+    // A reply from our side on an open item. One message can advance the item several steps (for example a first reply that
+    // answers AND says it is fixed), so each stage re-reads the item and the next stage runs on its new state.
+    if (open && ctx.direction !== "INBOUND") {
+      let item = open;
+      let applied: AnalyzeSummary | null = null;
+      const ids = [...new Set([open.originMessageId, id])];
+      const refresh = async () => (await findThreadItem(org, ctx.threadId)) ?? item;
+
+      // Stage 1: acknowledgment versus substantive response (rule 5).
+      if (item.state === "RECEIVED" || item.state === "ACKNOWLEDGED" || item.state === "REOPENED") {
+        const sub = await run(substantiveResponseAnalyzer, ids, { itemId: item.id });
+        const ack = item.state === "ACKNOWLEDGED" ? null : await run(acknowledgmentDetector, ids, { itemId: item.id });
+        for (const o of [sub, ack]) if (o && o.outcome === "NEEDS_REVIEW") return { status: "NEEDS_REVIEW", reason: o.reason };
+        const subOk = sub.outcome === "OK" ? sub : null;
+        const ackOk = ack && ack.outcome === "OK" ? ack : null;
+        const decision = decideReply(item.state, subject, subOk, ackOk);
+        if (decision.kind === "CONTRADICTION") {
+          await queueReviewTask(org, { type: "LOW_CONFIDENCE", refType: "TrackedItem", refId: item.id });
+          log("warn", "analyze.contradiction", { organizationId: org, messageId: id, itemId: item.id });
+          return { status: "NEEDS_REVIEW", reason: "ACK_AND_SUBSTANTIVE_CONTRADICT" };
+        }
+        if (decision.kind !== "NONE") {
+          const chosen = decision.kind === "RESPONDED" ? subOk! : ackOk!;
+          const outcome = await proposeAs(item, transitionTarget(chosen.recommendedAction)!, chosen, decision.kind === "RESPONDED" ? substantiveResponseAnalyzer.name : acknowledgmentDetector.name);
+          applied = fromEngine(outcome, item.id, decision.kind);
+          item = await refresh();
+        }
+      } else if (item.state !== "RESPONDED" && item.state !== "IN_PROGRESS") {
+        return { status: "SKIPPED", reason: "ITEM_NOT_AWAITING_REPLY" };
+      }
+
+      // Stage 2: has the work been declared fixed (a PROPOSAL, never a resolution), or is it merely underway?
+      if (item.state === "RESPONDED" || item.state === "IN_PROGRESS") {
+        const res = await run(resolutionAnalyzer, ids, { itemId: item.id });
+        if (res.outcome === "NEEDS_REVIEW") return applied ?? { status: "NEEDS_REVIEW", reason: res.reason };
+        const verdict = decideResolution(item.state, subject, res.outcome === "OK" ? res : null);
+        if (verdict.kind === "PROPOSE_RESOLUTION" && res.outcome === "OK") {
+          const outcome = await proposeAs(item, "RESOLUTION_PROPOSED", res, resolutionAnalyzer.name);
+          return fromEngine(outcome, item.id, "RESOLUTION_PROPOSED");
+        }
+        if (item.state === "RESPONDED") {
+          const prog = await run(progressAnalyzer, ids, { itemId: item.id });
+          if (prog.outcome === "NEEDS_REVIEW") return applied ?? { status: "NEEDS_REVIEW", reason: prog.reason };
+          if (prog.outcome === "OK" && decideProgress(item.state, subject, prog).kind === "IN_PROGRESS") {
+            const outcome = await proposeAs(item, "IN_PROGRESS", prog, progressAnalyzer.name);
+            return fromEngine(outcome, item.id, "IN_PROGRESS");
+          }
+        }
+      }
+      return applied ?? { status: "NO_CHANGE", itemId: item.id };
     }
 
-    if (open) return { status: "SKIPPED", reason: "INBOUND_ON_OPEN_ITEM" }; // progress and resolution analyzers arrive in Sprint 7
+    // A customer message while a resolution is proposed: a confirmation is only ever SUGGESTED to a human (rule 2), and a
+    // rejection sends the item back to work.
+    if (open && open.state === "RESOLUTION_PROPOSED") {
+      const refs = await listThreadMessageRefs(org, ctx.threadId);
+      const lastOurs = [...refs].reverse().find((m) => m.direction !== "INBOUND" && m.sentAt.getTime() <= ctx.sentAt.getTime());
+      const ids = [...new Set([open.originMessageId, ...(lastOurs ? [lastOurs.id] : []), id])];
+      const res = await run(resolutionAnalyzer, ids, { itemId: open.id });
+      if (res.outcome === "NEEDS_REVIEW") return { status: "NEEDS_REVIEW", reason: res.reason };
+      const verdict = decideResolution(open.state, subject, res.outcome === "OK" ? res : null);
+      if (verdict.kind === "SUGGEST_CONFIRMATION" && res.outcome === "OK") {
+        const outcome = await proposeAs(open, "RESOLUTION_CONFIRMED", res, resolutionAnalyzer.name, "Customer appears to confirm the resolution");
+        return outcome.outcome === "APPROVAL_REQUIRED" ? { status: "CONFIRMATION_SUGGESTED", itemId: open.id } : fromEngine(outcome, open.id, "IN_PROGRESS");
+      }
+      if (verdict.kind === "BACK_TO_IN_PROGRESS" && res.outcome === "OK") {
+        return fromEngine(await proposeAs(open, "IN_PROGRESS", res, resolutionAnalyzer.name, "Customer says the resolution did not work"), open.id, "IN_PROGRESS");
+      }
+      return { status: "NO_CHANGE", itemId: open.id };
+    }
+
+    if (open) return { status: "SKIPPED", reason: "INBOUND_ON_OPEN_ITEM" };
     if (ctx.direction !== "INBOUND") return { status: "SKIPPED", reason: "OUR_OWN_MESSAGE_NO_ITEM" };
 
     // An inbound message with no open item: is it something we must act on?
@@ -166,7 +220,7 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
   }
 }
 
-function fromEngine(outcome: Outcome, itemId: string, kind: "RESPONDED" | "ACKNOWLEDGED" | "REOPENED"): AnalyzeSummary {
+function fromEngine(outcome: Outcome, itemId: string, kind: "RESPONDED" | "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLUTION_PROPOSED" | "REOPENED"): AnalyzeSummary {
   if (outcome.outcome === "APPLIED") return kind === "REOPENED" ? { status: "NO_CHANGE", itemId } : { status: kind, itemId };
   if (outcome.outcome === "NOOP") return { status: "NO_CHANGE", itemId };
   if (outcome.outcome === "NEEDS_REVIEW") return { status: "NEEDS_REVIEW", reason: outcome.reason };

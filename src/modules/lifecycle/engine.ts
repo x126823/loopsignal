@@ -42,12 +42,12 @@ const settingsSchema = z.object({
   confidenceThreshold: z.number().min(0).max(1).optional(),
 });
 
-interface OrgPolicy extends PolicyOptions {
+export interface OrgPolicy extends PolicyOptions {
   confidenceThreshold: number;
 }
 
 /** Per-organization lifecycle settings live at Organization.settings.lifecycle. Invalid settings fall back to defaults. */
-async function loadPolicy(tx: TenantTx, organizationId: string): Promise<OrgPolicy> {
+export async function loadPolicy(tx: TenantTx, organizationId: string): Promise<OrgPolicy> {
   const org = await tx.organization.findUnique({ where: { id: organizationId }, select: { settings: true } });
   const raw = (org?.settings as { lifecycle?: unknown } | null)?.lifecycle ?? {};
   const parsed = settingsSchema.safeParse(raw);
@@ -373,6 +373,13 @@ export async function assignOwner(
     });
   }
   await tx.trackedItem.update({ where: { id: item.id }, data: { ownerUserId: req.userId } }); // not a guarded column
+  if (req.userId) {
+    // A person has now decided who owns it, so the "someone needs to assign an owner" task is done.
+    await tx.reviewTask.updateMany({
+      where: { type: "OWNERSHIP", refType: "TrackedItem", refId: item.id, status: "OPEN" },
+      data: { status: "RESOLVED", resolution: "Owner assigned" },
+    });
+  }
   await recordAudit(tx, {
     organizationId: item.organizationId, actorType: "USER", actorId: req.principal.userId, action: "item.owner_assigned",
     entityType: "TrackedItem", entityId: item.id, metadata: { previousOwner: item.ownerUserId, owner: req.userId },

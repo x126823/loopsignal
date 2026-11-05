@@ -30,7 +30,13 @@ const contextSchema = z
   .strict()
   .refine((c) => c.organizationId || c.userId || c.loginEmail, { message: "empty tenant context" });
 
-const store = new AsyncLocalStorage<TenantContext>();
+/**
+ * The active tenant context. It lives on globalThis, like the client below, because Next.js can load this module more than
+ * once (separately bundled routes and server actions each get their own copy). The scoped client is shared across copies, so
+ * the store it reads must be shared too; a module-local store would be empty whenever a different copy ran `withTenant`.
+ */
+const globalForStore = globalThis as unknown as { __loopsignalTenantStore?: AsyncLocalStorage<TenantContext> };
+const store = (globalForStore.__loopsignalTenantStore ??= new AsyncLocalStorage<TenantContext>());
 
 /** Models with a direct organizationId column. Everything here is scoped by the extension. */
 const ORG_SCOPED_MODELS = new Set([
