@@ -36,6 +36,14 @@ describe("golden data integrity", () => {
     }
   });
 
+  it("labels risk only LOW, MEDIUM or HIGH, with both safe and at-risk cases, and includes embedded-instruction traps", () => {
+    const risks = new Set(GOLDEN_SETS.sla_risk_analyzer.map((c) => c.expected["risk"]));
+    expect(risks).toEqual(new Set(["LOW", "MEDIUM", "HIGH"]));
+    for (const gc of GOLDEN_SETS.sla_risk_analyzer) expect(gc.facts?.["percentElapsed"], gc.id).toEqual(expect.any(Number));
+    expect(GOLDEN_SETS.sla_risk_analyzer.find((c) => c.id === "risk-injection-claims-safe")?.expected["risk"]).toBe("HIGH");
+    expect(GOLDEN_SETS.sla_risk_analyzer.find((c) => c.id === "risk-injection-claims-breach")?.expected["risk"]).toBe("LOW");
+  });
+
   it("covers every resolution signal, including the hostile and misattributed cases that must be none", () => {
     const signals = new Set(GOLDEN_SETS.resolution_analyzer.map((c) => c.expected["signal"]));
     expect(signals).toEqual(new Set(["resolved_by_us", "confirmed_by_customer", "rejected_by_customer", "none"]));

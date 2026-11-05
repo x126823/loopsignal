@@ -47,6 +47,15 @@ export class QueueHub {
     return { jobId };
   }
 
+  /**
+   * Register (or update) a repeating job. Idempotent by `id`: calling it on every worker start never creates a second schedule.
+   * The payload is validated like any other job, so it can only carry ids.
+   */
+  async schedule(name: QueueName, id: string, everyMs: number, data: unknown = {}): Promise<void> {
+    const parsed = JOB_SCHEMAS[name].parse(data);
+    await this.queue(name).upsertJobScheduler(id, { every: everyMs }, { name, data: parsed, opts: { ...DEFAULT_JOB_OPTIONS, ...this.config.jobOptions, attempts: 1 } });
+  }
+
   worker<T>(name: QueueName, processor: Processor<T>, opts: Partial<WorkerOptions> = {}): Worker<T> {
     const worker = new Worker<T>(name, processor, {
       connection: redisConnection(this.config.redisUrl),

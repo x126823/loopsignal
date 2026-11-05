@@ -118,6 +118,30 @@ describe("seeded scenarios", () => {
     });
   });
 
+  it("derives SLA timers with the SLA engine: four per item, urgent policy for urgent items, business hours for the rest", async () => {
+    await acme(async (tx) => {
+      const battery = await byKey(tx, "battery");
+      const outage = await byKey(tx, "checkout-outage-mail");
+      const contract = await byKey(tx, "contract-question");
+      for (const item of [battery, outage, contract]) expect((await tx.slaTimer.findMany({ where: { itemId: item.id } })).map((t) => t.type).sort()).toEqual(["ACK", "CLOSE", "RESOLVE", "RESPONSE"]);
+      const policies = new Map((await tx.slaPolicy.findMany()).map((p) => [p.id, p.name]));
+      expect(policies.get(battery.slaPolicyId!)).toBe("Urgent");
+      expect(policies.get(contract.slaPolicyId!)).toBe("Default");
+      const timer = async (itemId: string, type: string) => tx.slaTimer.findFirstOrThrow({ where: { itemId, type: type as never } });
+      // Urgent: 15 minute ack target, around the clock, from receipt.
+      const batteryAck = await timer(battery.id, "ACK");
+      expect(batteryAck.dueAt.getTime() - batteryAck.startedAt.getTime()).toBe(900_000);
+      // A substantive reply six minutes in satisfies the acknowledgment timer too, in time.
+      expect((await timer(outage.id, "ACK")).state).toBe("MET");
+      // Default: received Monday 19:00 UTC (after hours), so the 1 business hour ack target is due Tuesday 10:00 UTC.
+      expect((await timer(contract.id, "ACK")).dueAt.toISOString()).toBe("2026-10-06T10:00:00.000Z");
+      // Every breach row belongs to a breached timer, exactly one each.
+      const rows = await tx.slaBreach.findMany({ include: { timer: true } });
+      expect(rows.every((b) => b.timer.state === "BREACHED")).toBe(true);
+      expect(new Set(rows.map((b) => b.timerId)).size).toBe(rows.length);
+    });
+  });
+
   it("encrypts bodies and raw payloads, and never stores plaintext", async () => {
     await acme(async (tx) => {
       const msgs = await tx.message.findMany();

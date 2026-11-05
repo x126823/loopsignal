@@ -11,7 +11,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed drives scenarios through the engine. Sprint 4 (ingestion) in review: adapter interface, synthetic adapter, idempotent RawEvent to Message pipeline, BullMQ queues with retries and dead-letter. Sprint 5 (AI foundation) complete. Sprint 6 (analyzers 1-4) complete. Sprint 7 (human decisions) in review: progress and resolution analyzers, and the web UI for approving or rejecting a resolution, formal closure, the item page and the review queue. Nothing auto-closes. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed drives scenarios through the engine. Sprint 4 (ingestion) in review: adapter interface, synthetic adapter, idempotent RawEvent to Message pipeline, BullMQ queues with retries and dead-letter. Sprint 5 (AI foundation) complete. Sprint 6 (analyzers 1-4) complete. Sprint 7 (human decisions) in review: progress and resolution analyzers, and the web UI for approving or rejecting a resolution, formal closure, the item page and the review queue. Nothing auto-closes. Sprint 8 (SLA engine) in review: policies and business calendars, four timers per cycle derived from lifecycle events, a repeating breach scan, a `Clock` for deterministic tests, and an advisory SLA Risk Analyzer. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -45,9 +45,9 @@ nvm use            # Node 22 (.nvmrc)
 npm install
 docker compose up -d   # first run also creates the loopsignal_app DB role
 npm run db:migrate
-npm run db:seed        # idempotent; synthetic users, 2 orgs, 14 scenarios. Users: alice|bob|carol|dave|erin|frank|gina@synthetic.loopsignal.test
+npm run db:seed        # idempotent; synthetic users, 2 orgs, 14 scenarios, SLA timers from the real engine at a fixed clock. Users: alice|bob|carol|dave|erin|frank|gina@synthetic.loopsignal.test
 npm run dev        # http://localhost:3000 (sign in with a seeded user, for example carol@synthetic.loopsignal.test)
-npm run worker     # BullMQ worker: processes ingest-source jobs
+npm run worker     # BullMQ worker: ingest, analysis, and the SLA scan (every 60 s)
 npm run ingest:synthetic   # queue a sync of the seeded synthetic mailbox (worker must be running)
 ```
 

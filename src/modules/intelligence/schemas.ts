@@ -60,4 +60,6 @@ export interface AnalyzerDefinition<R> {
   instructions: string;
   resultSchema: z.ZodType<R>;
   maxOutputTokens?: number;
+  /** Advisory analyzers only produce hints for people and never drive a decision, so a failed run is recorded but does not queue a review task. */
+  advisory?: boolean;
 }

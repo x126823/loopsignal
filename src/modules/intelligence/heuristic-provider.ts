@@ -12,6 +12,7 @@ const tokens = (s: string) => Math.ceil(s.length / 4);
 interface Parsed {
   messages: Array<{ id: string; direction: string; sentAt: string; text: string }>;
   candidates: Array<{ id: string; name: string; handle: string }>;
+  facts: Record<string, string>;
 }
 
 function parse(user: string): Parsed {
@@ -21,7 +22,9 @@ function parse(user: string): Parsed {
   const candidates = [...user.matchAll(/<candidate_[0-9a-f]{16} id="([0-9a-f-]{36})" name=("(?:[^"\\]|\\.)*") handle=("(?:[^"\\]|\\.)*")\/>/g)].map((m) => ({
     id: m[1]!, name: z.string().parse(JSON.parse(m[2]!)), handle: z.string().parse(JSON.parse(m[3]!)),
   }));
-  return { messages, candidates };
+  const block = user.match(/<facts_[0-9a-f]{16}>\n([\s\S]*?)\n<\/facts_[0-9a-f]{16}>/);
+  const facts = Object.fromEntries((block?.[1] ?? "").split("\n").flatMap((l) => { const i = l.indexOf(": "); return i > 0 ? [[l.slice(0, i), l.slice(i + 2)] as const] : []; }));
+  return { messages, candidates, facts };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -109,6 +112,22 @@ function resolution(p: Parsed): Env {
   return claim(RESOLVED_BY_US, "resolved_by_us", "TRANSITION_RESOLUTION_PROPOSED") ?? none();
 }
 
+const BLOCKED = /(blocked|urgent|asap|escalat|again|still (no|waiting)|no one|nobody|third time|any update|deadline|outage)/i;
+const NEARLY_DONE = /(is now fixed|has been fixed|have fixed|should now work|let us know if (it|this) works|fix (is|has been) (deployed|live)|sending (it|this|the \w+) (now|shortly)|will send (it|this) (today|within the hour))/i;
+
+/** Advisory only: combines the system-measured percentElapsed with simple cues from the last message. */
+function slaRisk(p: Parsed): Env {
+  const pct = Number(p.facts["percentElapsed"]);
+  const last = p.messages.at(-1);
+  const level = (risk: string, c: number) => env({ risk }, c, [], "NONE");
+  if (!Number.isFinite(pct)) return level("MEDIUM", 0.5);
+  if (last && last.direction !== "INBOUND" && NEARLY_DONE.test(last.text)) return level("LOW", 0.85);
+  if (last && last.direction === "INBOUND" && BLOCKED.test(last.text)) return level("HIGH", 0.85);
+  if (pct >= 95) return level("HIGH", 0.8);
+  if (last && last.direction !== "INBOUND" && PROGRESS.test(last.text)) return level("MEDIUM", 0.8);
+  return level(pct >= 90 ? "HIGH" : "MEDIUM", 0.75);
+}
+
 export class HeuristicProvider implements LLMProvider {
   readonly name = "fake-heuristic";
   readonly model = "heuristic-1";
@@ -123,6 +142,7 @@ export class HeuristicProvider implements LLMProvider {
       case "substantive_response": json = reply(p, "sub"); break;
       case "progress_analyzer": json = progress(p); break;
       case "resolution_analyzer": json = resolution(p); break;
+      case "sla_risk_analyzer": json = slaRisk(p); break;
       default: return { kind: "output", json: undefined, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: 0, model: this.model }; // unknown analyzer: invalid on purpose
     }
     return { kind: "output", json, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: tokens(JSON.stringify(json)), model: this.model };

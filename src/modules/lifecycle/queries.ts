@@ -239,3 +239,31 @@ export async function getApprovalPolicy(principal: Principal): Promise<{ approva
 
 /** Whether this principal may work (close) the review queue. The same rule `resolveReviewTask` enforces. */
 export const canResolveReviewTasks = (principal: Principal): boolean => REVIEW_RESOLVERS.has(principal.orgRole);
+
+export interface ItemForSla {
+  id: string;
+  teamId: string;
+  priority: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  slaPolicyId: string | null;
+  originMessageId: string;
+  state: ItemState;
+  events: Array<{ seq: number; cycle: number; toState: ItemState; createdAt: Date }>;
+}
+
+/** An item's SLA-relevant facts and its ordered events, for deriving timers. Read-only; callers authorize. */
+export async function loadItemForSla(organizationId: string, itemId: string): Promise<ItemForSla | null> {
+  return withTenant({ organizationId }, async (tx) => {
+    const item = await tx.trackedItem.findUnique({ where: { id: itemId } });
+    if (!item) return null;
+    const events = await tx.lifecycleEvent.findMany({ where: { itemId }, orderBy: { seq: "asc" }, select: { seq: true, cycle: true, toState: true, createdAt: true } });
+    return { id: item.id, teamId: item.teamId, priority: item.priority, slaPolicyId: item.slaPolicyId, originMessageId: item.originMessageId, state: item.state, events };
+  });
+}
+
+/** Ids of items that are not closed: the work the SLA scan always re-checks. */
+export async function listOpenItemIds(organizationId: string, limit = 5_000): Promise<string[]> {
+  return withTenant({ organizationId }, async (tx) => {
+    const rows = await tx.trackedItem.findMany({ where: { state: { not: "CLOSED" } }, select: { id: true }, orderBy: { createdAt: "asc" }, take: limit });
+    return rows.map((r) => r.id);
+  });
+}

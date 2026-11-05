@@ -1,6 +1,6 @@
 import { canonicalJson, sha256 } from "@/lib/hash";
 import { checkEvidence, forceApproval } from "./guard";
-import { chooseNonce, systemPrompt, userPrompt, type PromptCandidate, type PromptMessage } from "./prompt";
+import { chooseNonce, systemPrompt, userPrompt, validateFacts, type PromptCandidate, type PromptFacts, type PromptMessage } from "./prompt";
 import { redact } from "./redaction";
 import { analyzerOutputSchema, type AnalyzerDefinition, type AnalyzerOutput } from "./schemas";
 import type { LLMProvider } from "./types";
@@ -39,19 +39,20 @@ export interface Prepared {
 const MAX_ATTEMPTS = 2; // one call plus one bounded retry on invalid output
 
 export function prepare<R>(
-  def: AnalyzerDefinition<R>, messages: CoreMessage[], candidates: PromptCandidate[], provider: Pick<LLMProvider, "name" | "model">, secret: Buffer,
+  def: AnalyzerDefinition<R>, messages: CoreMessage[], candidates: PromptCandidate[], provider: Pick<LLMProvider, "name" | "model">, secret: Buffer, facts: PromptFacts = {},
 ): Prepared {
+  validateFacts(facts);
   const ordered = [...messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime() || a.id.localeCompare(b.id));
   const people = [...candidates].sort((a, b) => a.id.localeCompare(b.id));
   const originals = new Map(ordered.map((m) => [m.id, m.text]));
   const promptMessages: PromptMessage[] = ordered.map((m) => ({ messageId: m.id, direction: m.direction, sentAt: m.sentAt.toISOString(), text: redact(m.text).text }));
   // Identical input, prompt version, provider and model give identical results, so they share a cache entry.
-  const inputHash = sha256(canonicalJson({ analyzer: def.name, promptVersion: def.promptVersion, provider: provider.name, model: provider.model, messages: promptMessages, candidates: people }));
+  const inputHash = sha256(canonicalJson({ analyzer: def.name, promptVersion: def.promptVersion, provider: provider.name, model: provider.model, messages: promptMessages, candidates: people, facts }));
   const nonce = chooseNonce(secret, inputHash, promptMessages, people);
   return {
     promptMessages, candidates: people, originals, inputHash,
     system: systemPrompt(def.instructions, def.promptVersion),
-    user: userPrompt(promptMessages, nonce, people),
+    user: userPrompt(promptMessages, nonce, people, facts),
   };
 }
 

@@ -8,6 +8,7 @@ import { INTENT_CASES } from "./data/intent";
 import { OWNERSHIP_CASES } from "./data/ownership";
 import { PROGRESS_CASES } from "./data/progress";
 import { RESOLUTION_CASES } from "./data/resolution";
+import { RISK_CASES } from "./data/risk";
 import type { GoldenCase } from "./types";
 
 export const GOLDEN_SETS: Record<AnalyzerName, ReadonlyArray<GoldenCase<Record<string, unknown>>>> = {
@@ -17,16 +18,17 @@ export const GOLDEN_SETS: Record<AnalyzerName, ReadonlyArray<GoldenCase<Record<s
   substantive_response: SUBSTANTIVE_CASES,
   progress_analyzer: PROGRESS_CASES,
   resolution_analyzer: RESOLUTION_CASES,
+  sla_risk_analyzer: RISK_CASES,
 };
 
 /** The one field of each analyzer's result that the golden label is about. */
 const KEY: Record<AnalyzerName, string> = {
   intent_classifier: "actionable", ownership_resolver: "ownerUserId", acknowledgment_detector: "isAcknowledgment", substantive_response: "isSubstantive",
-  progress_analyzer: "isProgress", resolution_analyzer: "signal",
+  progress_analyzer: "isProgress", resolution_analyzer: "signal", sla_risk_analyzer: "risk",
 };
 
 /** "Positive" means the analyzer found something: true, a named owner, or any resolution signal other than "none". */
-const isPositive = (v: unknown) => v !== false && v !== null && v !== "none";
+const isPositive = (v: unknown) => v !== false && v !== null && v !== "none" && v !== "LOW"; // for risk, only MEDIUM and HIGH count as "at risk"
 
 export interface CaseRow {
   id: string;
@@ -66,7 +68,7 @@ async function runSet(name: AnalyzerName, provider: LLMProvider, secret: Buffer,
   let tp = 0, fp = 0, fn = 0, wrongAssignments = 0;
 
   for (const gc of cases) {
-    const prepared = prepare(def, gc.messages, gc.candidates ?? [], provider, secret);
+    const prepared = prepare(def, gc.messages, gc.candidates ?? [], provider, secret, gc.facts ?? {});
     const run = await execute(def, prepared, provider, threshold);
     const expected = gc.expected[KEY[name]];
     if (run.kind === "failed") {

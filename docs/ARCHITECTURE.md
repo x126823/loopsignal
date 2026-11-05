@@ -39,7 +39,7 @@ Rules: modules import each other only via `index.ts`; lint boundaries enforce it
 2. **Analyze:** Intent Classifier decides actionable or not. If actionable, the Ownership Resolver runs. Correlation Analyzer checks for an existing `TrackedItem` (same thread, or cross-channel candidate).
 3. **Apply:** the worker calls `lifecycle.propose(...)` with the recommendation. The engine validates and either applies the transition, queues an `ApprovalRequest`, or creates a `ReviewTask`.
 4. **Follow-up messages** on a tracked thread run Ack Detector, Substantive Response Analyzer, Progress Analyzer, Resolution Analyzer as appropriate.
-5. **Timers:** SLA engine maintains `SlaTimer` rows; a repeatable job flags warnings and breaches; SLA Risk Analyzer produces advisory risk scores.
+5. **Timers:** SLA engine derives `SlaTimer` rows from lifecycle events; a repeating scan flags warnings and breaches (section 8); the SLA Risk Analyzer produces advisory risk hints.
 
 ## 4. Lifecycle engine
 
@@ -215,9 +215,25 @@ Roles: `ORG_ADMIN`, `TEAM_LEAD`, `MEMBER`, `VIEWER`, `AUDITOR`. Deny by default;
 
 Authentication is Auth.js with JWT sessions carrying only the user id. Sign-in is invite-only: Google succeeds only for a verified email that already has a `User` row. A dev credentials provider accepts only `@synthetic.loopsignal.test` users and is refused in production.
 
-## 8. SLA engine
+## 8. SLA engine (implemented in Sprint 8)
 
-`SlaPolicy` (per team/source/priority) defines targets for ack, first substantive response, resolution, and closure, with a `BusinessCalendar`. Timers are rows with `dueAt`; a repeatable job scans for warn/breach. Time is injected via a `Clock` interface for deterministic tests.
+`src/modules/sla`. The SLA engine is a **derived read model**: it never writes `TrackedItem` (rule 1) and the lifecycle module never calls it. Timers are a pure function of three things: the item's `LifecycleEvent`s, the due dates frozen when each timer was created, and `Clock.now()`.
+
+**Timers.** Four per reopen cycle, one per metric (rule 4): ACK, RESPONSE, RESOLVE, CLOSE. All start at the cycle's start (receipt, or the reopen) and are measured from there. A reopen starts a new cycle with new timers; earlier cycles are kept. States: `RUNNING`, `WARNED` (at `warnAtPct` of the target, default 80), `BREACHED`, `MET`, `CANCELLED`.
+- ACK is satisfied by the earlier of the acknowledgment and the first substantive response (a substantive reply also acknowledges), but the metrics themselves stay separate (rule 5): the item still records its own `ackAt` only when an acknowledgment event exists.
+- Completing a timer after its due time is `BREACHED`, not `MET`. When a cycle ends (closed or reopened), an overdue incomplete timer is `BREACHED` and a not-yet-due one is `CANCELLED`.
+- Due and warning times are fixed at creation from the policy then in force. Editing a policy never re-times work in flight.
+- Nothing is edited by hand: re-running `reconcileItem` any number of times, from any number of workers, in any order, yields the same rows. A late scan equals a timely scan.
+
+**Policies and calendars.** `SlaPolicy` targets must be nested (ack <= response <= resolve <= close), enforced by the schema and a DB CHECK. A policy may be scoped to a team, a monitored source and/or a priority; the most specific wins (weights: source 4, team 2, priority 1; ties break by name then id). The policy is chosen once, when the item is created, and stored on the item. `BusinessCalendar` holds an IANA timezone, per-weekday open ranges (split shifts and `24:00` allowed) and holidays. Business-time arithmetic uses `Intl` only (no new dependency) and handles DST changes, half-hour zones and holidays. DST convention: a skipped local time reads as the same wall time after the change; an ambiguous one reads as its first occurrence. With no calendar, time is continuous.
+
+**Scan.** A BullMQ job scheduler (`sla-scan`, every 60 s, registered idempotently on worker start) calls `scanAll`. It reconciles every open item plus items whose timers are still unsettled (so a just-closed item is finalized), under each organization's own tenant context; one failing item never stops the rest. Each breached timer gets exactly one `SlaBreach` (unique on `timerId`) and one `sla.timer_breached` audit entry, written in the same transaction as the state change. Each timer that newly enters its warning window queues one advisory `sla-risk` job, de-duplicated by timer id.
+
+**Cross-tenant discovery.** The scan must find which organizations have policies without a tenant context. That is the one deliberate cross-tenant read: `listOrganizationsWithSlaPolicies()` calls the `SECURITY DEFINER` function `sla_scan_org_ids()`, which returns organization ids only, has a fixed `search_path`, is revoked from `PUBLIC` and granted to the app role only. Everything after discovery is tenant-scoped. **Deployment note:** the role that runs migrations must be allowed to bypass RLS (a table owner or superuser, as in the Docker Compose setup), because the function runs with its owner's rights.
+
+**SLA Risk Analyzer (advisory).** Analyzer 7, `sla_risk_analyzer`. It reads the thread plus system-measured *facts* (`timerType`, `percentElapsed` in business time) and answers LOW, MEDIUM or HIGH. Facts travel in their own `<facts_NONCE>` block outside the untrusted message block, and are validated (plain keys; numbers, booleans or short tokens only) so nothing free-form can enter through them; they are part of the input hash. The analyzer is `advisory`: its recommended action is always `NONE`, it changes no timer, breach or state, and a failed run is recorded without queueing a review task. The item page shows its latest estimate only while a timer is due soon.
+
+**Known limits.** No pause while waiting on the customer; policies and calendars are created through the module API (organization administrators, audited) but there is no UI yet; a risk job lost between settling a timer and queueing is not re-sent (the estimate is a hint).
 
 ## 9. Observability
 

@@ -22,15 +22,23 @@ function cli<T>(command: string, args: unknown = {}): T {
   return JSON.parse(line.slice("@@JSON@@".length)) as T;
 }
 
-const pool = new Pool({ connectionString: process.env["DATABASE_URL"]!.replace(/\?schema=\w+$/, "") });
-export const closeDb = () => pool.end();
+// One worker runs every spec file in the same module instance, so the pool is opened on demand and a spec's afterAll can close
+// it without breaking the next spec file.
+let sharedPool: Pool | null = null;
+const getPool = (): Pool => (sharedPool ??= new Pool({ connectionString: process.env["DATABASE_URL"]!.replace(/\?schema=\w+$/, "") }));
+export async function closeDb(): Promise<void> {
+  const p = sharedPool;
+  sharedPool = null;
+  await p?.end();
+}
 export async function sql<T extends Record<string, unknown> = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
-  return (await pool.query(text, params)).rows as T[];
+  return (await getPool().query(text, params)).rows as T[];
 }
 
 export const newOrg = () => cli<Fx>("new-org");
 export const newItem = (org: Fx, title: string, opts: { state?: "RECEIVED" | "RESPONDED" | "RESOLUTION_PROPOSED"; suggestConfirmation?: boolean } = {}) =>
   cli<{ itemId: string; threadId: string }>("new-item", { org, title, ...opts });
+export const newSlaItem = (org: Fx, title: string, opts: { replied?: boolean } = {}) => cli<{ itemId: string; threadId: string }>("new-sla-item", { org, title, ...opts });
 export const humanMove = (org: Fx, itemId: string, to: "RESOLUTION_CONFIRMED" | "CLOSED") => cli("human-move", { org, itemId, to });
 export const queueReview = (org: Fx, type: "OWNERSHIP" | "LOW_CONFIDENCE", itemId: string) => cli("queue-review", { org, type, itemId });
 export const cleanup = (...orgs: Fx[]) => cli("cleanup", { orgs });
@@ -43,7 +51,7 @@ export const setOrgSettings = (organizationId: string, settings: object) => sql(
 
 /** Simulate someone else changing the item while a form is open, by bumping its version the way the engine would. */
 export async function bumpVersion(itemId: string): Promise<void> {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query("begin");
     await client.query(`select set_config('app.lifecycle_writer', 'on', true)`);

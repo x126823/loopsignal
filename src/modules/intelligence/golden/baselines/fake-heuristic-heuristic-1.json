@@ -99,6 +99,22 @@
         "support": 19,
         "coverage": 1
       }
+    },
+    "sla_risk_analyzer": {
+      "promptVersion": "1",
+      "total": 20,
+      "answered": 20,
+      "abstained": 0,
+      "accuracy": 0.9,
+      "precision": 0.867,
+      "recall": 1,
+      "f1": 0.929,
+      "calibration": {
+        "threshold": 0.8,
+        "precision": 1,
+        "support": 16,
+        "coverage": 0.8
+      }
     }
   }
 }

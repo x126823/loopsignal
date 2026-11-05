@@ -513,15 +513,20 @@ model SlaTimer {
   id             String        @id @default(uuid(7)) @db.Uuid
   organizationId String        @db.Uuid
   itemId         String        @db.Uuid
+  /// Lifecycle cycle this timer belongs to (a reopen starts a new cycle with its own timers).
+  cycle          Int           @default(1)
   type           SlaTimerType
   startedAt      DateTime      @db.Timestamptz(3)
+  /// Fixed when the timer is created, so a later policy edit never re-times work already in flight.
   dueAt          DateTime      @db.Timestamptz(3)
+  warnAt         DateTime?     @db.Timestamptz(3)
   state          SlaTimerState @default(RUNNING)
   resolvedAt     DateTime?     @db.Timestamptz(3)
   item           TrackedItem   @relation(fields: [organizationId, itemId], references: [organizationId, id])
   breaches       SlaBreach[]
 
   @@unique([organizationId, id])
+  @@unique([itemId, cycle, type])
   @@index([organizationId, state, dueAt])
   @@index([organizationId, itemId])
 }
@@ -534,6 +539,8 @@ model SlaBreach {
   acknowledgedBy String?  @db.Uuid
   timer          SlaTimer @relation(fields: [organizationId, timerId], references: [organizationId, id])
 
+  /// One breach per timer, whoever detects it first.
+  @@unique([timerId])
   @@index([organizationId, timerId])
 }
 

@@ -154,3 +154,13 @@ export async function withTenant<T>(ctx: TenantContext, fn: (tx: TenantTx) => Pr
 
 /** Exposed for tests that need to prove the extension is the only thing between callers and the DB. */
 export const __internal = { createScopedClient, store };
+
+/**
+ * Ids of the organizations that have SLA policies, for the breach scanner. This is the single deliberate cross-tenant read in
+ * the application: a narrow SECURITY DEFINER function (see the sla_engine migration) returning ids only. Raw SQL is not seen by
+ * the tenant extension, so this works without a tenant context; callers then process each organization under its own context.
+ */
+export async function listOrganizationsWithSlaPolicies(): Promise<string[]> {
+  const rows = await getScopedClient().$queryRaw<Array<{ id: string }>>`SELECT sla_scan_org_ids() AS id`;
+  return rows.map((r) => r.id);
+}

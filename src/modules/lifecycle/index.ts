@@ -2,8 +2,8 @@
 // This module is the sole writer of TrackedItem state and the four metrics (CLAUDE.md rule 1).
 export { apply, assignOwner, createItem, decideApproval, propose, verifyItemMetrics, type DecisionOutcome, type OwnerOutcome } from "./engine";
 export {
-  canResolveReviewTasks, findThreadItem, getApprovalPolicy, getItemDetail, listOpenReviewTasks, listPendingApprovals, listVisibleItems, queueReviewTask, resolveReviewTask,
-  type ApprovalView, type ItemDetail, type ItemEventView, type ItemSummary, type PendingApproval, type ReviewKind, type ReviewResolveOutcome, type ReviewTaskView, type ThreadItem,
+  canResolveReviewTasks, findThreadItem, getApprovalPolicy, getItemDetail, listOpenItemIds, listOpenReviewTasks, loadItemForSla, listPendingApprovals, listVisibleItems, queueReviewTask, resolveReviewTask,
+  type ApprovalView, type ItemDetail, type ItemEventView, type ItemForSla, type ItemSummary, type PendingApproval, type ReviewKind, type ReviewResolveOutcome, type ReviewTaskView, type ThreadItem,
 } from "./queries";
 export { deriveMetrics, type DerivedItem, type EventForMetrics } from "./metrics";
 export { DEFAULT_CONFIDENCE_THRESHOLD, HUMAN_DECISION_STATES, ITEM_STATES, ruleFor, TRANSITIONS, type TransitionRule } from "./transitions";

@@ -8,6 +8,8 @@ export interface MessageContext {
   direction: "INBOUND" | "OUTBOUND" | "INTERNAL";
   sentAt: Date;
   subject: string | null;
+  /** The monitored source the message arrived through. */
+  monitoredSourceId: string;
   /** Team the message's monitored source is routed to, if any. */
   teamId: string | null;
 }
@@ -17,7 +19,7 @@ export async function loadMessageContext(organizationId: string, messageId: stri
   return withTenant({ organizationId }, async (tx) => {
     const m = await tx.message.findUnique({ where: { id: messageId }, include: { monitoredSource: true } });
     if (!m) return null;
-    return { id: m.id, threadId: m.threadId, direction: m.direction, sentAt: m.sentAt, subject: m.subject, teamId: m.monitoredSource.teamId };
+    return { id: m.id, threadId: m.threadId, direction: m.direction, sentAt: m.sentAt, subject: m.subject, monitoredSourceId: m.monitoredSourceId, teamId: m.monitoredSource.teamId };
   });
 }
 

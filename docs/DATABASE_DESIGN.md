@@ -39,10 +39,10 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 - **AnalysisRun**: organizationId, analyzer, itemId (nullable), messageId (nullable), provider, model, promptVersion, inputHash, output (json, validated), confidence, evidence (json), recommendedAction, requiresHumanApproval, status (`OK|SCHEMA_FAILED|REJECTED_GUARD`), tokensIn, tokensOut, createdAt. Unique (organizationId, analyzer, inputHash, promptVersion) for caching. The key is scoped by organization so a cache hit can never cross tenants.
 
 ### SLA
-- **SlaPolicy**: organizationId, name, scope (team/source/priority), ackTargetSec, responseTargetSec, resolveTargetSec, closeTargetSec, calendarId, warnAtPct
-- **BusinessCalendar**: organizationId, timezone, hours (json), holidays (json)
-- **SlaTimer**: itemId, type (`ACK|RESPONSE|RESOLVE|CLOSE`), startedAt, dueAt, state (`RUNNING|MET|WARNED|BREACHED|CANCELLED`), resolvedAt
-- **SlaBreach**: timerId, breachedAt, acknowledgedBy
+- **SlaPolicy**: organizationId, name (unique per org), scope (teamId / monitoredSourceId / priority, each nullable), ackTargetSec, responseTargetSec, resolveTargetSec, closeTargetSec (CHECK: ack <= response <= resolve <= close), calendarId (nullable = continuous time), warnAtPct
+- **BusinessCalendar**: organizationId, timezone (IANA), hours (json: weekday -> list of ["HH:MM","HH:MM"] ranges), holidays (json: "YYYY-MM-DD" list)
+- **SlaTimer**: itemId, cycle (>= 1, new on reopen), type (`ACK|RESPONSE|RESOLVE|CLOSE`), startedAt, dueAt and warnAt (frozen at creation), state (`RUNNING|MET|WARNED|BREACHED|CANCELLED`), resolvedAt. Unique (itemId, cycle, type). A derived read model: rebuilt from events, never edited by hand.
+- **SlaBreach**: timerId (unique: one breach per timer), breachedAt (the timer's due time), acknowledgedBy
 
 ### Other
 - **Notification**, **NotificationPreference**: recipient, type, payload (no message content beyond ids), channel, readAt
