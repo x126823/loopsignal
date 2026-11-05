@@ -10,6 +10,8 @@ const schema = z
     /** Runtime connection: non-owner role, RLS always applies. */
     APP_DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),
+    /** Namespaces BullMQ keys in Redis (tests use a unique prefix per run). */
+    QUEUE_PREFIX: z.string().regex(/^[A-Za-z0-9_-]+$/).default("loopsignal"),
     AUTH_SECRET: z.string().min(32),
     /** Base64 of 32 random bytes. Encrypts message bodies and raw payloads (see src/lib/crypto). */
     FIELD_ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64"),

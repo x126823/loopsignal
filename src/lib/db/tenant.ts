@@ -133,8 +133,8 @@ function getScopedClient(): ScopedClient {
   return globalForDb.__loopsignalScoped;
 }
 
-/** Run `fn` inside a transaction bound to the given tenant context. */
-export async function withTenant<T>(ctx: TenantContext, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
+/** Run `fn` inside a transaction bound to the given tenant context. `timeoutMs` raises Prisma's 5s default for bulk work. */
+export async function withTenant<T>(ctx: TenantContext, fn: (tx: TenantTx) => Promise<T>, opts: { timeoutMs?: number } = {}): Promise<T> {
   const parsed = contextSchema.parse(ctx);
   return getScopedClient().$transaction(async (tx) => {
     await tx.$executeRaw`SELECT
@@ -143,7 +143,7 @@ export async function withTenant<T>(ctx: TenantContext, fn: (tx: TenantTx) => Pr
       set_config('app.login_email', ${parsed.loginEmail ?? ""}, true)`;
     // Await inside the run: Prisma promises are lazy and would otherwise execute outside the context.
     return store.run(parsed, async () => await fn(tx as unknown as TenantTx));
-  });
+  }, { timeout: opts.timeoutMs ?? 5_000 });
 }
 
 /** Exposed for tests that need to prove the extension is the only thing between callers and the DB. */

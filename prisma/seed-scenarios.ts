@@ -346,6 +346,22 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
   return count;
 }
 
+/**
+ * A mailbox the synthetic adapter can sync (`npm run ingest:synthetic`). Idempotent and independent of the scenario
+ * sentinel, so it is also added to databases that were seeded before it existed.
+ */
+async function ensureIngestSource(org: "acme" | "globex", organizationId: string, teamId: string): Promise<void> {
+  await withTenant({ organizationId }, async (tx) => {
+    const connection = await tx.sourceConnection.findUnique({ where: { organizationId_id: { organizationId, id: stableId(`${org}:conn`) } } });
+    if (!connection) return;
+    await tx.monitoredSource.upsert({
+      where: { id: stableId(`${org}:src:ingest`) },
+      create: { id: stableId(`${org}:src:ingest`), organizationId, connectionId: connection.id, kind: "MAILBOX", externalId: "synthetic-inbox@synthetic.test", teamId },
+      update: {},
+    });
+  });
+}
+
 export async function seedScenarios(ids: {
   orgs: Record<"acme" | "globex", string>;
   teams: Record<string, string>;
@@ -370,5 +386,6 @@ export async function seedScenarios(ids: {
         principal: (h) => principals.get(h) ?? (() => { throw new Error(`No principal for ${h}`); })(),
       }, org));
     console.log(n === 0 ? `Scenarios for ${org}: already seeded` : `Scenarios for ${org}: seeded ${n}`);
+    await ensureIngestSource(org, organizationId, ids.teams[org === "acme" ? "acme:Support" : "globex:Operations"]!);
   }
 }
