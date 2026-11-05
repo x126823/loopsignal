@@ -21,6 +21,9 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       DATABASE_URL: postgresql://loopsignal:loopsignal@localhost:5432/loopsignal?schema=public
+      APP_DATABASE_URL: postgresql://loopsignal_app:loopsignal_app@localhost:5432/loopsignal?schema=public
+      AUTH_SECRET: ci-only-secret-0123456789abcdef0123456789
+      AUTH_DEV_LOGIN: "true"
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +32,13 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Create runtime DB role
+        run: psql -h localhost -U loopsignal -d loopsignal -v ON_ERROR_STOP=1 -f docker/postgres/init/01-app-role.sql
+        env:
+          PGPASSWORD: loopsignal
       - run: npm run db:generate
+      - run: npm run db:deploy
+      - run: npm run db:seed
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
