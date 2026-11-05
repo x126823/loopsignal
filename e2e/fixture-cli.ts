@@ -5,6 +5,8 @@ import { createPrismaClient, withTenant } from "../src/lib/db";
 import { ManualClock } from "../src/lib/clock";
 import { apply, createItem, propose, queueReviewTask } from "../src/modules/lifecycle";
 import { createPolicy, reconcileItem } from "../src/modules/sla";
+import { HeuristicProvider } from "../src/modules/intelligence";
+import { handleAnalyzeMessage } from "../src/workers/analyze-message";
 import { purgeOrgs, syntheticEmail, testKey } from "../tests/helpers/fixtures";
 import { at, createEngineFixture, createMessage, createThreadWithMessage, engineOpts, type EngineFixture } from "../tests/helpers/engine-fixture";
 
@@ -74,6 +76,24 @@ const commands: Record<string, (args: never) => Promise<unknown>> = {
     }
     await reconcileItem(f.organizationId, created.itemId, { clock: new ManualClock(at(30)) });
     return { itemId: created.itemId, threadId };
+  },
+
+  // A tracked email and a Chat message that looks like the same matter, run through the real analysis worker with the offline
+  // heuristic provider: it ends with a pending cross-channel question for a person, and no item for the chat thread.
+  async "new-candidate"(a: { org: EngineFixture; title?: string }) {
+    const f = a.org;
+    const base = await owner.monitoredSource.findUniqueOrThrow({ where: { id: f.sourceId } });
+    const chatSource = await owner.monitoredSource.create({ data: { organizationId: f.organizationId, connectionId: base.connectionId, kind: "SPACE", externalId: `chat-${Math.random().toString(36).slice(2)}`, teamId: f.teamId } });
+    const run = (messageId: string) => handleAnalyzeMessage({ organizationId: f.organizationId, messageId }, { provider: new HeuristicProvider(), pipeline: { fieldKey: testKey }, engine: engineOpts, now: () => new Date(Date.UTC(2026, 10, 1)) });
+    const mail = await createThreadWithMessage(owner, f, "Our checkout page returns an error for all our customers right now. Order #48213 failed.", 0);
+    const created = await run(mail.messageId);
+    if (created.status !== "ITEM_CREATED") throw new Error(`mail item: ${JSON.stringify(created)}`);
+    await owner.trackedItem.update({ where: { id: created.itemId }, data: { title: a.title ?? "Checkout outage" } }).catch(() => undefined);
+    const chatThread = await owner.thread.create({ data: { organizationId: f.organizationId, provider: "SYNTHETIC", externalThreadId: `chat-${Math.random().toString(36).slice(2)}` } });
+    const chat = await createMessage(owner, f, chatThread.id, "Checkout is broken, customers get an error on the checkout page. Order #48213 is stuck.", 20, "INBOUND", chatSource.id);
+    const out = await run(chat.id);
+    if (out.status !== "CORRELATION_PENDING") throw new Error(`chat: ${JSON.stringify(out)}`);
+    return { itemId: created.itemId, candidateId: out.candidateId, chatThreadId: chatThread.id, chatMessageId: chat.id };
   },
 
   async "human-move"(a: { org: EngineFixture; itemId: string; to: "RESOLUTION_CONFIRMED" | "CLOSED" }) {

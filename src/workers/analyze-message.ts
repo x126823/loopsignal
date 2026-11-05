@@ -3,11 +3,12 @@ import type { Job } from "bullmq";
 import { log } from "@/lib/log";
 import { listThreadMessageRefs, loadMessageContext } from "@/modules/ingestion";
 import {
-  acknowledgmentDetector, attachRunsToItem, intentClassifier, ownershipResolver, progressAnalyzer, ProviderError, resolutionAnalyzer, runAnalyzer, substantiveResponseAnalyzer, transitionTarget,
+  acknowledgmentDetector, attachRunsToItem, correlationAnalyzer, intentClassifier, ownershipResolver, progressAnalyzer, ProviderError, resolutionAnalyzer, runAnalyzer, substantiveResponseAnalyzer, transitionTarget,
   type AnalysisOutcome, type AnalyzerDefinition, type LLMProvider, type PipelineDeps,
 } from "@/modules/intelligence";
+import { findBestMatch, findPendingForThread, queueCandidate, type Verdict } from "@/modules/correlation";
 import { resolvePolicyFor } from "@/modules/sla";
-import { createItem, findThreadItem, propose, queueReviewTask, type EngineOptions, type Outcome } from "@/modules/lifecycle";
+import { createItem, findLinkedItem, findThreadItem, propose, queueReviewTask, type EngineOptions, type Outcome } from "@/modules/lifecycle";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { withTenant } from "@/lib/db";
 import { acceptedOwner, decideProgress, decideReply, decideResolution, nextBudgetWindow, shouldTrack, type Ok } from "./analysis-plan";
@@ -23,6 +24,8 @@ export interface AnalyzeDeps {
 export type AnalyzeSummary =
   | { status: "SKIPPED"; reason: "MESSAGE_NOT_FOUND" | "OUR_OWN_MESSAGE_NO_ITEM" | "INBOUND_ON_OPEN_ITEM" | "ITEM_NOT_AWAITING_REPLY" }
   | { status: "NOT_ACTIONABLE" }
+  /** Probably about an item we track in another channel. A review task asks a person; the message gets no item until they decide. */
+  | { status: "CORRELATION_PENDING"; candidateId: string }
   | { status: "ITEM_CREATED"; itemId: string; ownerAssigned: boolean; caughtUp: number }
   | { status: "ITEM_EXISTS"; itemId: string }
   | { status: "REOPEN_SUGGESTED"; itemId: string }
@@ -71,7 +74,8 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
   async function analyze(org: string, id: string, d: AnalyzeDeps): Promise<AnalyzeSummary> {
     const ctx = await loadMessageContext(org, id);
     if (!ctx) return { status: "SKIPPED", reason: "MESSAGE_NOT_FOUND" };
-    const existing = await findThreadItem(org, ctx.threadId);
+    // A thread a person attached to an item from another channel acts on that item, exactly like the item's own thread.
+    const existing = (await findThreadItem(org, ctx.threadId)) ?? (await findLinkedItem(org, ctx.threadId));
     const open = existing && existing.state !== "CLOSED" ? existing : null;
     const pipelineDeps: PipelineDeps = { provider: d.provider, ...d.pipeline };
 
@@ -164,6 +168,10 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
     if (open) return { status: "SKIPPED", reason: "INBOUND_ON_OPEN_ITEM" };
     if (ctx.direction !== "INBOUND") return { status: "SKIPPED", reason: "OUR_OWN_MESSAGE_NO_ITEM" };
 
+    // A person is already being asked whether this thread belongs to an item we track elsewhere: do not spend a model call or ask twice.
+    const waiting = await findPendingForThread(org, ctx.threadId);
+    if (waiting) return { status: "CORRELATION_PENDING", candidateId: waiting.id };
+
     // An inbound message with no open item: is it something we must act on?
     const intent = await run(intentClassifier, [id]);
     if (intent.outcome === "NEEDS_REVIEW") return { status: "NEEDS_REVIEW", reason: intent.reason };
@@ -178,6 +186,24 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
         }, d.engine));
       await attachRunsToItem(org, [intent.analysisRunId], existing.id);
       return outcome.outcome === "APPROVAL_REQUIRED" ? { status: "REOPEN_SUGGESTED", itemId: existing.id } : fromEngine(outcome, existing.id, "REOPENED");
+    }
+
+    // Is this message probably about something we already track in another channel? Code scores it, a model may add an advisory
+    // verdict, and a PERSON decides (rule 9). Nothing is linked or merged here, whatever the score.
+    if (!existing) {
+      const match = await findBestMatch(org, id, d.pipeline?.fieldKey ? { fieldKey: d.pipeline.fieldKey } : {});
+      if (match) {
+        const judged = await run(correlationAnalyzer, [match.targetOriginMessageId, id]);
+        const verdict: Verdict | undefined = judged.outcome === "OK"
+          ? { sameMatter: judged.result.sameMatter, confidence: judged.confidence, analysisRunId: judged.analysisRunId }
+          : undefined;
+        // Only a confident "no" keeps the message out of the review queue; keeping two items apart is the cheap mistake.
+        if (verdict?.sameMatter !== "no") {
+          const queued = await queueCandidate(org, { subjectMessageId: id, match, ...(verdict ? { verdict } : {}) });
+          log("info", "analyze.correlation_queued", { organizationId: org, messageId: id, candidateId: queued.candidateId, created: queued.created });
+          return { status: "CORRELATION_PENDING", candidateId: queued.candidateId };
+        }
+      }
     }
 
     const teamId = ctx.teamId;

@@ -128,6 +128,33 @@ function slaRisk(p: Parsed): Env {
   return level(pct >= 90 ? "HIGH" : "MEDIUM", 0.75);
 }
 
+const CORR_STOP = new Set("the and for are but not you your our out has have had was were with this that from they them their what when where which who will would could should can cant cannot get got just now all any one two its about after before again also been more some such only other each those these here please thanks thank hello dear regards team need help".split(" "));
+const corrWords = (t: string) => new Set(t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !CORR_STOP.has(w)));
+const corrRefs = (t: string) => new Set([...t.matchAll(/#\d{3,}|\b[A-Za-z]{2,6}-\d{2,}\b|\b\d{5,}\b/g)].map((m) => m[0].toLowerCase()));
+const verbatim = (text: string, token: string) => text.match(new RegExp(esc(token), "i"))?.[0] ?? null;
+
+/** Advisory: the same matter if the two messages share a reference number or enough wording. Never links anything. */
+function correlation(p: Parsed): Env {
+  const first = p.messages[0];
+  const last = p.messages.at(-1);
+  const out = (v: "yes" | "no" | "unsure", c: number, ev: Env["evidence"] = []) => env({ sameMatter: v }, c, ev, v === "yes" ? "LINK_CANDIDATE" : "NONE");
+  if (!first || !last || first.id === last.id) return out("unsure", 0.5);
+  const [a, b] = [corrWords(first.text), corrWords(last.text)];
+  const shared = [...a].filter((w) => b.has(w));
+  const jac = a.size + b.size === 0 ? 0 : shared.length / (a.size + b.size - shared.length);
+  const refs = [...corrRefs(first.text)].filter((r) => corrRefs(last.text).has(r));
+  const quote = (token: string) => {
+    const x = verbatim(first.text, token);
+    const y = verbatim(last.text, token);
+    return x && y ? [{ messageId: first.id, quote: x }, { messageId: last.id, quote: y }] : null;
+  };
+  if (refs[0]) { const ev = quote(refs[0]); if (ev) return out("yes", 0.9, ev); }
+  const best = [...shared].sort((x, y) => y.length - x.length)[0];
+  if (jac >= 0.3 && shared.length >= 3 && best) { const ev = quote(best); if (ev) return out("yes", 0.8, ev); }
+  if (jac < 0.1) return out("no", 0.85);
+  return out("unsure", 0.7);
+}
+
 export class HeuristicProvider implements LLMProvider {
   readonly name = "fake-heuristic";
   readonly model = "heuristic-1";
@@ -143,6 +170,7 @@ export class HeuristicProvider implements LLMProvider {
       case "progress_analyzer": json = progress(p); break;
       case "resolution_analyzer": json = resolution(p); break;
       case "sla_risk_analyzer": json = slaRisk(p); break;
+      case "correlation_analyzer": json = correlation(p); break;
       default: return { kind: "output", json: undefined, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: 0, model: this.model }; // unknown analyzer: invalid on purpose
     }
     return { kind: "output", json, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: tokens(JSON.stringify(json)), model: this.model };

@@ -7,7 +7,7 @@ import { Label, Textarea } from "@/components/ui/field";
  * note and a final, explicit submit button. Nothing happens on the first click.
  */
 export function ActionForm({
-  action, fields, summary, submitLabel, variant = "default", noteLabel = "Note (optional)", description,
+  action, fields, summary, submitLabel, variant = "default", noteLabel = "Note (optional)", description, showNote = true,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   /** Hidden inputs: ids and the expected version. Convenience only; the server re-validates and re-authorizes. */
@@ -17,6 +17,8 @@ export function ActionForm({
   variant?: "default" | "danger" | "outline";
   noteLabel?: string;
   description?: ReactNode;
+  /** Hide the note box when the action has no use for one. */
+  showNote?: boolean;
 }) {
   const id = `note-${Object.values(fields).join("-").slice(0, 60)}-${submitLabel}`.replace(/[^a-zA-Z0-9-]/g, "");
   return (
@@ -25,8 +27,8 @@ export function ActionForm({
       <form action={action} className="flex flex-col gap-3 border-t border-border px-4 py-3">
         {Object.entries(fields).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
-        <Label htmlFor={id}>{noteLabel}</Label>
-        <Textarea id={id} name="reason" maxLength={500} rows={2} />
+        {showNote && <Label htmlFor={id}>{noteLabel}</Label>}
+        {showNote && <Textarea id={id} name="reason" maxLength={500} rows={2} />}
         <div>
           <Button type="submit" variant={variant}>{submitLabel}</Button>
         </div>

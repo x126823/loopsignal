@@ -122,7 +122,8 @@ describe("a new inbound message", () => {
   it("needs a team: a source with none is queued for a human, and no item is invented", async () => {
     const source = await owner.monitoredSource.create({ data: { organizationId: f.organizationId, connectionId: (await owner.monitoredSource.findUniqueOrThrow({ where: { id: f.sourceId } })).connectionId, kind: "MAILBOX", externalId: `no-team-${randomUUID()}` } });
     const thread = await owner.thread.create({ data: { organizationId: f.organizationId, provider: "SYNTHETIC", externalThreadId: `t-${randomUUID()}` } });
-    const m = await createMessage(owner, f, thread.id, REQUEST, 0, "INBOUND", source.id);
+    // Deliberately about something else: identical wording in another source would (correctly) be offered to a person as a possible duplicate.
+    const m = await createMessage(owner, f, thread.id, "Please help, our warehouse scanner will not pair with the tablet.", 0, "INBOUND", source.id);
     expect(await handle(m.id)).toEqual({ status: "NEEDS_REVIEW", reason: "SOURCE_HAS_NO_TEAM" });
     expect(await itemOf(thread.id)).toBeNull();
     expect(await owner.reviewTask.count({ where: { refType: "Message", refId: m.id, type: "OWNERSHIP", status: "OPEN" } })).toBe(1);

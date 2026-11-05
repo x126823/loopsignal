@@ -1,3 +1,4 @@
+import type { DecisionOutcome as CorrelationOutcome } from "@/modules/correlation";
 import type { DecisionOutcome, Outcome, OwnerOutcome, ReviewResolveOutcome } from "@/modules/lifecycle";
 
 /**
@@ -26,6 +27,16 @@ export const NOTICES = {
   review_resolved: { tone: "success", text: "Review task resolved." },
   review_dismissed: { tone: "info", text: "Review task dismissed." },
   review_not_open: { tone: "warning", text: "That review task is no longer open." },
+  correlation_confirmed: { tone: "success", text: "Attached. The conversation now belongs to that item." },
+  correlation_rejected: { tone: "info", text: "Kept separate. The message will be tracked as its own item." },
+  correlation_split: { tone: "info", text: "Detached. The message will be tracked as its own item." },
+  correlation_decided: { tone: "warning", text: "That question was already decided." },
+  correlation_target_closed: { tone: "warning", text: "That item is closed, so nothing can be attached to it. You can still keep the message separate." },
+  correlation_split_blocked: { tone: "warning", text: "This conversation already moved the item forward, so it cannot be detached. Use the item's own decisions instead." },
+  correlation_not_confirmed: { tone: "warning", text: "Only an attached conversation can be detached." },
+  follow_up_failed: { tone: "warning", text: "Your decision was saved, but the follow-up could not be queued yet. Use \"Retry follow-up\" on the review page." },
+  follow_up_retried: { tone: "success", text: "Follow-up queued." },
+  decision_required: { tone: "warning", text: "A cross-channel question is closed by deciding it: attach it or keep it separate." },
   conflict: { tone: "warning", text: "Someone else changed this at the same moment. Please try again." },
 } as const satisfies Record<string, { tone: NoticeTone; text: string }>;
 
@@ -65,5 +76,16 @@ export function noticeForOwner(o: OwnerOutcome): NoticeKey {
 export function noticeForReview(o: ReviewResolveOutcome): NoticeKey {
   if (o.outcome === "RESOLVED") return "review_resolved";
   if (o.outcome === "DISMISSED") return "review_dismissed";
-  return o.reason === "NOT_OPEN" ? "review_not_open" : "not_found";
+  return o.reason === "NOT_OPEN" ? "review_not_open" : o.reason === "DECISION_REQUIRED" ? "decision_required" : "not_found";
+}
+
+export function noticeForCorrelation(o: CorrelationOutcome): NoticeKey {
+  switch (o.outcome) {
+    case "CONFIRMED": return "correlation_confirmed";
+    case "REJECTED": return "correlation_rejected";
+    case "SPLIT": return "correlation_split";
+    case "REFUSED":
+      return o.reason === "ALREADY_DECIDED" ? "correlation_decided" : o.reason === "TARGET_CLOSED" ? "correlation_target_closed"
+        : o.reason === "THREAD_HAS_HISTORY" ? "correlation_split_blocked" : o.reason === "NOT_CONFIRMED" ? "correlation_not_confirmed" : "not_found";
+  }
 }

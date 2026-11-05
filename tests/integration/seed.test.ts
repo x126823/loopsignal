@@ -97,7 +97,11 @@ describe("seeded scenarios", () => {
     await acme(async (tx) => {
       const cand = await tx.correlationCandidate.findMany();
       expect(cand).toHaveLength(1);
-      expect([cand[0]!.status, cand[0]!.score]).toEqual(["PENDING", 0.72]);
+      expect(cand[0]!.status).toBe("PENDING");
+      expect(cand[0]!.score).toBeGreaterThanOrEqual(0.45); // scored by the real scorer, above the review threshold
+      expect(cand[0]!.score).toBeLessThan(1);
+      expect((cand[0]!.rationale as { v: number; signals: Array<{ name: string }> }).signals.map((x) => x.name)).toEqual(["time", "sender", "reference", "text"]);
+      expect([cand[0]!.decidedBy, cand[0]!.decidedAt, cand[0]!.followUpAt]).toEqual([null, null, null]);
       expect((await tx.message.findUniqueOrThrow({ where: { id: cand[0]!.subjectId } })).provider).toBe("GOOGLE_CHAT");
       expect(await tx.trackedItem.count({ where: { threadId: stableId("acme:thread:checkout-outage-chat") } })).toBe(0);
       const reviews = await tx.reviewTask.findMany({ where: { status: "OPEN" } });

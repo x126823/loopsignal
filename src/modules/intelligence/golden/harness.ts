@@ -8,6 +8,7 @@ import { INTENT_CASES } from "./data/intent";
 import { OWNERSHIP_CASES } from "./data/ownership";
 import { PROGRESS_CASES } from "./data/progress";
 import { RESOLUTION_CASES } from "./data/resolution";
+import { CORRELATION_CASES } from "./data/correlation";
 import { RISK_CASES } from "./data/risk";
 import type { GoldenCase } from "./types";
 
@@ -19,16 +20,17 @@ export const GOLDEN_SETS: Record<AnalyzerName, ReadonlyArray<GoldenCase<Record<s
   progress_analyzer: PROGRESS_CASES,
   resolution_analyzer: RESOLUTION_CASES,
   sla_risk_analyzer: RISK_CASES,
+  correlation_analyzer: CORRELATION_CASES,
 };
 
 /** The one field of each analyzer's result that the golden label is about. */
 const KEY: Record<AnalyzerName, string> = {
   intent_classifier: "actionable", ownership_resolver: "ownerUserId", acknowledgment_detector: "isAcknowledgment", substantive_response: "isSubstantive",
-  progress_analyzer: "isProgress", resolution_analyzer: "signal", sla_risk_analyzer: "risk",
+  progress_analyzer: "isProgress", resolution_analyzer: "signal", sla_risk_analyzer: "risk", correlation_analyzer: "sameMatter",
 };
 
 /** "Positive" means the analyzer found something: true, a named owner, or any resolution signal other than "none". */
-const isPositive = (v: unknown) => v !== false && v !== null && v !== "none" && v !== "LOW"; // for risk, only MEDIUM and HIGH count as "at risk"
+const isPositive = (v: unknown) => v !== false && v !== null && v !== "none" && v !== "LOW" && v !== "no" && v !== "unsure"; // risk: only MEDIUM/HIGH are "at risk"; correlation: only "yes" is a match
 
 export interface CaseRow {
   id: string;

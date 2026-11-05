@@ -16,6 +16,7 @@ import { ManualClock } from "../src/lib/clock";
 import { withTenant, type TenantTx } from "../src/lib/db";
 import { encryptField, parseFieldKey } from "../src/lib/crypto/fields";
 import { recordAudit } from "../src/modules/audit";
+import { scorePair, SHOW_THRESHOLD } from "../src/modules/correlation";
 import { resolvePrincipal, type Principal } from "../src/modules/identity";
 import { apply, createItem, propose, type EngineOptions } from "../src/modules/lifecycle";
 import { scanOrganization } from "../src/modules/sla";
@@ -165,7 +166,7 @@ const SCENARIOS: Scenario[] = [
     ] },
 
   { key: "checkout-outage-chat", org: "acme", team: "Support", channel: "chat", customer: 10, subject: "Checkout is down for customers?", noItem: true,
-    messages: [{ from: "customer", atMin: 815, text: "Is checkout down for anyone else? Customers are reporting errors at payment." }],
+    messages: [{ from: "customer", atMin: 815, text: "Is checkout down for anyone else? Customers are reporting an error on the checkout page." }],
     steps: [] },
 
   { key: "ambiguous", org: "acme", team: "Support", channel: "gmail", customer: 11, subject: "Thoughts on reports", needsReview: true,
@@ -331,9 +332,14 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
     const target = stableId("acme:item:checkout-outage-mail");
     const chatMsg = stableId("acme:msg:checkout-outage-chat:0");
     const itemRow = await tx.trackedItem.findFirstOrThrow({ where: { threadId: stableId("acme:thread:checkout-outage-mail") } });
+    // Scored by the real scorer from the fixture texts, so the fixture can never disagree with the product about what a candidate is.
+    const text = (key: string) => SCENARIOS.find((x) => x.key === key)!.messages[0]!;
+    const feat = (key: string, threadKey: string, source: string) => ({ threadId: threadKey, monitoredSourceId: source, sentAt: at(text(key).atMin), subject: SCENARIOS.find((x) => x.key === key)!.subject, text: text(key).text, senderAddress: null, senderName: null });
+    const scored = scorePair(feat("checkout-outage-chat", "chat", "chat"), feat("checkout-outage-mail", "mail", "gmail"));
+    if (scored.excluded || scored.score < SHOW_THRESHOLD) throw new Error("Seed fixture is no longer a candidate for the real scorer");
     await tx.correlationCandidate.create({
-      data: { id: stableId("acme:corr:checkout"), organizationId, subjectType: "Message", subjectId: chatMsg, targetItemId: itemRow.id, score: 0.72,
-              rationale: { signals: ["same topic: checkout errors", "within 20 minutes", "different channel"], belowAutoMergeThreshold: true } },
+      data: { id: stableId("acme:corr:checkout"), organizationId, subjectType: "Message", subjectId: chatMsg, targetItemId: itemRow.id, score: scored.score,
+              rationale: JSON.parse(JSON.stringify({ v: 1, signals: scored.signals })) as object },
     });
     await tx.reviewTask.create({ data: { id: stableId("acme:review:checkout"), organizationId, type: "CORRELATION", refType: "CorrelationCandidate", refId: stableId("acme:corr:checkout") } });
     void target;

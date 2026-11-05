@@ -26,13 +26,13 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 
 ### Lifecycle
 - **TrackedItem**: organizationId, teamId, ownerUserId (nullable), originMessageId, threadId, title, priority, state, slaPolicyId, `ackAt`, `firstSubstantiveResponseAt`, `resolvedAt`, `closedAt`, `reopenCount`, `version`, flags (`needsReview`)
-- **ItemMessageLink**: itemId, messageId, role (`ORIGIN|ACK|RESPONSE|PROGRESS|RESOLUTION|OTHER`). Unique (item, message).
+- **ItemMessageLink**: itemId, messageId, role (`ORIGIN|ACK|RESPONSE|PROGRESS|RESOLUTION|OTHER`). Unique (item, message). `OTHER` is a message attached from another channel; it takes the transition's role when it first drives one. The only tenant table where the app role may DELETE (to detach a thread on a split), confined by RLS.
 - **LifecycleEvent** (append-only): itemId, cycle, fromState, toState, actorType (`USER|SYSTEM|ANALYZER`), actorId, analysisRunId, evidence (json), reason, createdAt
 - **ItemOwnership**: itemId, userId, assignedBy, assignedAt, endedAt
 - **ApprovalRequest**: itemId, requestedTransition, requestedBy, status (`PENDING|APPROVED|REJECTED|EXPIRED`), decidedBy, decidedAt, reason
 
 ### Correlation and review
-- **CorrelationCandidate**: organizationId, subjectType, subjectId, targetItemId, score, rationale (json), status (`PENDING|CONFIRMED|REJECTED`), decidedBy
+- **CorrelationCandidate**: organizationId, subjectType (`Message`), subjectId, targetItemId, score (0..1), rationale (json `{v, signals[], verdict?}`: counts and numbers only, no message text), status (`PENDING|CONFIRMED|REJECTED`), decidedBy and decidedAt (both set exactly when decided, CHECK), followUpAt (stamped once the follow-up jobs were queued). Unique (org, subjectType, subjectId, targetItemId). A split is recorded as `REJECTED`.
 - **ReviewTask**: organizationId, type (`LOW_CONFIDENCE|CORRELATION|SCHEMA_FAILURE|OWNERSHIP`), refType, refId, status, assignedTo, resolution
 
 ### AI

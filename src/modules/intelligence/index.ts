@@ -13,7 +13,7 @@ export {
   type AnalyzerDefinition, type AnalyzerOutput, type EvidenceItem, type RecommendedAction,
 } from "./schemas";
 export { ProviderError, type LLMProvider, type ProviderRequest, type ProviderResponse } from "./types";
-export { ANALYZERS, acknowledgmentDetector, intentClassifier, ownershipResolver, progressAnalyzer, resolutionAnalyzer, slaRiskAnalyzer, substantiveResponseAnalyzer, type AnalyzerName, type AcknowledgmentResult, type IntentResult, type OwnershipResult, type ProgressResult, type ResolutionResult, type SlaRiskResult, type SubstantiveResult } from "./analyzers";
+export { ANALYZERS, acknowledgmentDetector, correlationAnalyzer, intentClassifier, ownershipResolver, progressAnalyzer, resolutionAnalyzer, slaRiskAnalyzer, substantiveResponseAnalyzer, type AnalyzerName, type AcknowledgmentResult, type CorrelationResult, type IntentResult, type OwnershipResult, type ProgressResult, type ResolutionResult, type SlaRiskResult, type SubstantiveResult } from "./analyzers";
 export { recommendThreshold, type Calibration, type Sample } from "./calibration";
 export { execute, prepare, type CoreMessage, type ExecResult, type Prepared } from "./core";
 export { HeuristicProvider } from "./heuristic-provider";

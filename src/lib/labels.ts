@@ -52,3 +52,6 @@ export function describeActor(e: { actorType: "USER" | "SYSTEM" | "ANALYZER"; ac
   if (e.actorType === "ANALYZER") return `AI recommendation${e.actorLabel ? ` (${e.actorLabel.replace(/_/g, " ")})` : ""}`;
   return "System";
 }
+
+export const PROVIDER_LABEL: Record<string, string> = { GMAIL: "Gmail", GOOGLE_CHAT: "Google Chat", SYNTHETIC: "Synthetic source" };
+export const SIGNAL_LABEL: Record<string, string> = { time: "Timing", sender: "Sender", reference: "Reference numbers", text: "Wording" };

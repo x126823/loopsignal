@@ -5,6 +5,10 @@ export {
   canResolveReviewTasks, findThreadItem, getApprovalPolicy, getItemDetail, listOpenItemIds, listOpenReviewTasks, loadItemForSla, listPendingApprovals, listVisibleItems, queueReviewTask, resolveReviewTask,
   type ApprovalView, type ItemDetail, type ItemEventView, type ItemForSla, type ItemSummary, type PendingApproval, type ReviewKind, type ReviewResolveOutcome, type ReviewTaskView, type ThreadItem,
 } from "./queries";
+export {
+  closeReviewTasksFor, findLinkedItem, linkThreadToItem, listLinkedThreadIds, listOpenItemsForCorrelation, loadItemHeader, unlinkThreadFromItem,
+  type CorrelationTarget, type ItemHeader, type UnlinkOutcome,
+} from "./links";
 export { deriveMetrics, type DerivedItem, type EventForMetrics } from "./metrics";
 export { DEFAULT_CONFIDENCE_THRESHOLD, HUMAN_DECISION_STATES, ITEM_STATES, ruleFor, TRANSITIONS, type TransitionRule } from "./transitions";
 export {
