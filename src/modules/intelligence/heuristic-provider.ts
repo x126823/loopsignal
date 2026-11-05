@@ -1,0 +1,100 @@
+import { z } from "zod";
+import type { LLMProvider, ProviderRequest, ProviderResponse } from "./types";
+
+/**
+ * A rule-based stand-in for a model. It is what `LLM_PROVIDER=fake` runs, so the whole pipeline works locally with no
+ * credentials and golden-set evaluation is deterministic. It is NOT an AI and its scores say nothing about a real
+ * model: it matches keywords and is deliberately simple (and therefore imperfect). It reads only the delimited prompt it
+ * is given, exactly as a real provider would, and quotes verbatim from the text it was shown.
+ */
+const tokens = (s: string) => Math.ceil(s.length / 4);
+
+interface Parsed {
+  messages: Array<{ id: string; direction: string; sentAt: string; text: string }>;
+  candidates: Array<{ id: string; name: string; handle: string }>;
+}
+
+function parse(user: string): Parsed {
+  const messages = [...user.matchAll(/<message_([0-9a-f]{16}) id="([0-9a-f-]{36})" direction="(\w+)" sentAt="([^"]+)">\n([\s\S]*?)\n<\/message_\1>/g)].map((m) => ({
+    id: m[2]!, direction: m[3]!, sentAt: m[4]!, text: m[5]!,
+  }));
+  const candidates = [...user.matchAll(/<candidate_[0-9a-f]{16} id="([0-9a-f-]{36})" name=("(?:[^"\\]|\\.)*") handle=("(?:[^"\\]|\\.)*")\/>/g)].map((m) => ({
+    id: m[1]!, name: z.string().parse(JSON.parse(m[2]!)), handle: z.string().parse(JSON.parse(m[3]!)),
+  }));
+  return { messages, candidates };
+}
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const sentences = (t: string) => t.split(/(?<=[.?!])\s+/).map((s) => s.trim()).filter(Boolean);
+
+const NOISE = /unsubscribe|out of office|automatic reply|auto-?reply|no action (is )?needed|no reply needed|no further action|receipt #|you have won|click here|happy (holidays|new year)|webinar|delivery status|has shipped/i;
+const THANKS_ONLY = /^(thanks|thank you|great|sounds good|perfect|ok(ay)?)\b[^?]*$/i;
+const REQUEST = /\b(please|could you|can you|can someone|i need|we need|need help|unable|can'?t|cannot|not working|error|fail(ed|s)?|broken|wrong|missing|blocked|help|issue|problem|still (have )?no|following up|charged twice|pouvez)\b|\?/i;
+const ACK = /(we have received|received (this|your|it)|got (it|your)|looking into|look into|we are on it|we'?ll get back|get back to you|acknowledged|will review|reviewing)/i;
+const SUBSTANTIVE = /(fixed|resolved|reset|refund(ed)?|was issued|attached|the (cause|issue|problem) was|root cause|because|rotated|restarted|updated|ship(s|ped)? on|will ship|deployed|workaround|please (send|share|try|confirm)|could you (send|share|confirm)|can you (send|share|confirm)|cannot reproduce|can'?t reproduce|by (monday|tuesday|wednesday|thursday|friday)|on (monday|tuesday|wednesday|thursday|friday)|today|tomorrow|\?)/i;
+
+type Env = { result: unknown; confidence: number; evidence: Array<{ messageId: string; quote: string }>; recommendedAction: string; requiresHumanApproval: boolean };
+const env = (result: unknown, confidence: number, evidence: Env["evidence"], recommendedAction: string): Env => ({ result, confidence, evidence, recommendedAction, requiresHumanApproval: false });
+
+function intent(p: Parsed): Env {
+  const last = p.messages.at(-1);
+  const no = (c: number) => env({ actionable: false, kind: "other", priority: "NORMAL" }, c, [], "NOT_ACTIONABLE");
+  if (!last || last.direction !== "INBOUND") return no(0.95);
+  const text = last.text;
+  if (NOISE.test(text)) return no(0.9);
+  const hit = text.match(REQUEST);
+  if (!hit) return no(0.7);
+  if (THANKS_ONLY.test(text.trim())) return no(0.85);
+  const signals = [...text.matchAll(new RegExp(REQUEST.source, "gi"))].length;
+  const sentence = sentences(text).find((s) => REQUEST.test(s)) ?? hit[0];
+  const priority = /outage|down for|urgent|asap|immediately|every customer|all (our )?customers/i.test(text) ? "URGENT"
+    : /blocked|charged twice|wrong|before (friday|monday)|deadline/i.test(text) ? "HIGH"
+    : /not urgent|in the future|whenever|at some point/i.test(text) ? "LOW" : "NORMAL";
+  const kind = /following up|still (have )?no/i.test(text) ? "follow_up" : /error|not working|broken|fail/i.test(text) ? "incident" : /\?/.test(text) ? "question" : "request";
+  return env({ actionable: true, kind, priority }, signals >= 2 ? 0.92 : signals === 1 && hit[0] !== "?" ? 0.85 : 0.65, [{ messageId: last.id, quote: sentence.slice(0, 500) }], "TRACK");
+}
+
+function ownership(p: Parsed): Env {
+  const last = p.messages.at(-1);
+  const none = () => env({ ownerUserId: null }, 0.85, [], "NONE");
+  if (!last) return none();
+  const found = p.candidates.flatMap((c) => {
+    const first = c.name.split(/\s+/)[0] ?? c.name;
+    const m = last.text.match(new RegExp(`@${esc(c.handle)}\\b|\\b${esc(first)}\\b`, "i"));
+    return m ? [{ c, quote: m[0] }] : [];
+  });
+  if (found.length !== 1) return none();
+  return env({ ownerUserId: found[0]!.c.id }, 0.9, [{ messageId: last.id, quote: found[0]!.quote }], "ASSIGN_OWNER");
+}
+
+function reply(p: Parsed, kind: "ack" | "sub"): Env {
+  const last = p.messages.at(-1);
+  const resultKey = kind === "ack" ? "isAcknowledgment" : "isSubstantive";
+  const action = kind === "ack" ? "TRANSITION_ACKNOWLEDGED" : "TRANSITION_RESPONDED";
+  const no = (c: number) => env({ [resultKey]: false }, c, [], "NONE");
+  if (!last || last.direction === "INBOUND") return no(0.9); // never our acknowledgment or response
+  const sub = last.text.match(SUBSTANTIVE);
+  const ack = last.text.match(ACK);
+  if (kind === "ack") return ack && !sub && last.text.length < 250 ? env({ isAcknowledgment: true }, 0.9, [{ messageId: last.id, quote: ack[0] }], action) : no(0.85);
+  if (sub) return env({ isSubstantive: true }, 0.9, [{ messageId: last.id, quote: sub[0] }], action);
+  if (last.text.length > 400) return env({ isSubstantive: true }, 0.6, [{ messageId: last.id, quote: last.text.slice(0, 40) }], action);
+  return no(0.85);
+}
+
+export class HeuristicProvider implements LLMProvider {
+  readonly name = "fake-heuristic";
+  readonly model = "heuristic-1";
+
+  async complete(req: ProviderRequest): Promise<ProviderResponse> {
+    const p = parse(req.user);
+    let json: Env;
+    switch (req.analyzer) {
+      case "intent_classifier": json = intent(p); break;
+      case "ownership_resolver": json = ownership(p); break;
+      case "acknowledgment_detector": json = reply(p, "ack"); break;
+      case "substantive_response": json = reply(p, "sub"); break;
+      default: return { kind: "output", json: undefined, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: 0, model: this.model }; // unknown analyzer: invalid on purpose
+    }
+    return { kind: "output", json, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: tokens(JSON.stringify(json)), model: this.model };
+  }
+}

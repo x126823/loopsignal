@@ -4,7 +4,7 @@
 export { ClaudeProvider, type ClaudeClientLike, type ClaudeProviderOptions } from "./claude-provider";
 export { FakeProvider, type FakeReply, type FakeResponder } from "./fake-provider";
 export { checkEvidence, forceApproval, type GuardFailure } from "./guard";
-export { runAnalyzer, type AnalysisOutcome, type AnalyzeRequest, type FailureReason, type PipelineDeps } from "./pipeline";
+export { attachRunsToItem, runAnalyzer, type AnalysisOutcome, type AnalyzeRequest, type FailureReason, type PipelineDeps } from "./pipeline";
 export { chooseNonce, delimiterNonce, systemPrompt, userPrompt, type PromptMessage } from "./prompt";
 export { createProviderFromEnv } from "./provider-factory";
 export { redact, type RedactionKind, type RedactionResult } from "./redaction";
@@ -13,3 +13,8 @@ export {
   type AnalyzerDefinition, type AnalyzerOutput, type EvidenceItem, type RecommendedAction,
 } from "./schemas";
 export { ProviderError, type LLMProvider, type ProviderRequest, type ProviderResponse } from "./types";
+export { ANALYZERS, acknowledgmentDetector, intentClassifier, ownershipResolver, substantiveResponseAnalyzer, type AnalyzerName, type AcknowledgmentResult, type IntentResult, type OwnershipResult, type SubstantiveResult } from "./analyzers";
+export { recommendThreshold, type Calibration, type Sample } from "./calibration";
+export { execute, prepare, type CoreMessage, type ExecResult, type Prepared } from "./core";
+export { HeuristicProvider } from "./heuristic-provider";
+export { GOLDEN_SETS, runGolden, toBaseline, type AnalyzerMetrics, type Baseline, type CaseRow, type GoldenReport } from "./golden/harness";

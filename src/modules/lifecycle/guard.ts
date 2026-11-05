@@ -10,6 +10,12 @@ export async function asLifecycleWriter<T>(tx: TenantTx, fn: () => Promise<T>): 
   try {
     return await fn();
   } finally {
-    await tx.$executeRaw`SELECT set_config('app.lifecycle_writer', '', true)`;
+    try {
+      await tx.$executeRaw`SELECT set_config('app.lifecycle_writer', '', true)`;
+    } catch {
+      // If `fn` failed inside Postgres the transaction is aborted and this reset fails too. Swallow that secondary error so
+      // it cannot mask the original one (callers rely on it, for example to detect a unique-constraint race). The aborted
+      // transaction rolls back, and the transaction-local flag goes with it.
+    }
   }
 }

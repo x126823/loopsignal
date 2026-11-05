@@ -1,0 +1,72 @@
+{
+  "provider": "fake-heuristic",
+  "model": "heuristic-1",
+  "notForProduction": true,
+  "analyzers": {
+    "intent_classifier": {
+      "promptVersion": "1",
+      "total": 29,
+      "answered": 29,
+      "abstained": 0,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "calibration": {
+        "threshold": 0.65,
+        "precision": 1,
+        "support": 29,
+        "coverage": 1
+      }
+    },
+    "ownership_resolver": {
+      "promptVersion": "1",
+      "total": 15,
+      "answered": 15,
+      "abstained": 0,
+      "accuracy": 0.8,
+      "precision": 0.667,
+      "recall": 1,
+      "f1": 0.8,
+      "wrongAssignments": 3,
+      "calibration": {
+        "threshold": null,
+        "precision": null,
+        "support": 0,
+        "coverage": 0
+      }
+    },
+    "acknowledgment_detector": {
+      "promptVersion": "1",
+      "total": 17,
+      "answered": 17,
+      "abstained": 0,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "calibration": {
+        "threshold": 0.85,
+        "precision": 1,
+        "support": 17,
+        "coverage": 1
+      }
+    },
+    "substantive_response": {
+      "promptVersion": "1",
+      "total": 17,
+      "answered": 17,
+      "abstained": 0,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "calibration": {
+        "threshold": 0.85,
+        "precision": 1,
+        "support": 17,
+        "coverage": 1
+      }
+    }
+  }
+}

@@ -18,6 +18,8 @@ const schema = z
     LLM_MODEL: z.string().min(1).default("claude-opus-5-5"),
     LLM_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
     /** Per-organization cap on LLM tokens (input + output) per UTC day. Overridable in Organization.settings.llm. */
+    /** Worker throughput cap for analyze-message jobs (global, per worker process). */
+    ANALYZE_RATE_PER_MINUTE: z.coerce.number().int().positive().default(60),
     LLM_DAILY_TOKEN_BUDGET: z.coerce.number().int().positive().default(2_000_000),
     /** Base64 of 32 random bytes. Encrypts message bodies and raw payloads (see src/lib/crypto). */
     FIELD_ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64"),

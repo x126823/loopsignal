@@ -152,6 +152,33 @@ Guards (applied to every call):
 
 **What the guards guarantee, and what they do not.** With a model that obeys every hostile instruction, injected text cannot: break out of the delimiters or alter the instructions; make an output with fabricated, foreign or missing evidence count; add fields or actions to the output; skip human approval for a human decision; or cause the engine to confirm, close or reopen anything. They do **not** stop a fooled model from recommending a *routine* step (acknowledged, responded, in progress, proposed) with a real quote from the attacker's own message; the engine will apply that if it is legal and the confidence clears the threshold, attributed to the analyzer run and audited. Analyzers (Sprint 6) must reduce this further, for example by considering only outbound messages as acknowledgments. Known limits: the budget is a soft cap (concurrent calls can overshoot by their own size); concurrent identical analyses may each call the provider before one result wins (the stored result is single); per-organization rate limiting belongs at the queue level (Sprint 6); and the provider's data-retention terms have not been reviewed, which is why only synthetic data is used (rule 7).
 
+### 5c. Analyzers 1-4 and the analyze-message worker (implemented in Sprint 6)
+
+Four analyzers are defined in `src/modules/intelligence/analyzers.ts` (each a name, a `promptVersion`, instructions and a strict Zod result schema) and run through the guard pipeline. Bump `promptVersion` on any prompt or schema change.
+
+| Analyzer | Decides | Result |
+|---|---|---|
+| intent_classifier | Is the last message something we must act on? (inbound only) | `actionable`, `kind`, `priority` |
+| ownership_resolver | Does the message explicitly name exactly one team member? | `ownerUserId` (a candidate id or null) |
+| acknowledgment_detector | Is our reply only an acknowledgment? | `isAcknowledgment` |
+| substantive_response | Does our reply engage with the content? | `isSubstantive` |
+
+No free text is ever stored from a model: the item title is the message's own subject, and results are enums, booleans and ids. Ownership candidates are sent as a name and a mention handle only (never an email address) inside the untrusted block.
+
+**The worker** (`src/workers/analyze-message.ts`) is the only place recommendations meet the lifecycle engine:
+- *Inbound message, no item:* classify intent. If actionable, resolve an owner from the source's team and `createItem` (low confidence is flagged by the engine). A source with no team goes to an `OWNERSHIP` review task.
+- *Inbound message, thread already CLOSED:* if actionable, **suggest** a reopen. The engine queues an approval and the item stays CLOSED (rule 2).
+- *Our reply on an open item:* run both the substantive and acknowledgment analyzers and apply the rules in `analysis-plan.ts`.
+- *Ownership is assigned only at creation, and only if* the recommendation is `ASSIGN_OWNER`, the id is a real team member, confidence cleared the threshold, the evidence is the message itself, and the quoted phrase contains that person's handle or first name. Anything else queues an `OWNERSHIP` review task for a human. After creation only humans change the owner.
+
+**Decision rules that hold whatever the model says** (pure functions, tested exhaustively): a message from the outside (INBOUND) can never be our acknowledgment or response; an acknowledgment's or response's evidence must cite the message itself; a reply is RESPONDED only if substantive **and not** an acknowledgment, ACKNOWLEDGED only if an acknowledgment **and not** substantive; if both analyzers say yes they contradict each other and nothing moves, a human looks (a premature RESPONDED would flatter the response-time metric); a recommendation whose action does not match its own result is ignored. Timestamps are when messages were *sent*, not processed.
+
+**Job ordering.** Jobs for one thread run concurrently and in any order. A reply processed before its item existed would otherwise be lost, so once an item is created the worker evaluates the thread's later replies in order. Every step is idempotent (cached analyses, idempotent engine calls), so replays and duplicates change nothing.
+
+**Failures and limits.** A retryable provider error is retried by the queue with backoff; a permanent one is dead-lettered immediately. When the organization's daily budget is spent the job is delayed to 00:05 UTC without using a retry attempt (cached analyses are still served). Throughput is capped per worker process by `ANALYZE_RATE_PER_MINUTE`.
+
+**Golden sets** (`src/modules/intelligence/golden`): labeled synthetic cases per analyzer, run through the same `prepare`/`execute` guards as production with no database. `npm run golden` prints accuracy, precision, recall and a recommended confidence threshold (the lowest at which accepted answers reach 95% precision). The committed baseline `baselines/fake-heuristic-heuristic-1.json` is for the rule-based heuristic and is flagged `notForProduction`: the heuristic was written alongside these small sets (29, 15, 17 and 17 cases), so its scores overstate it and say nothing about a real model. Real baselines and thresholds need `LIVE_LLM=1 npm run golden -- --provider claude --write`, which costs money and should use a larger, independently written set. Until then the placeholder threshold stays at 0.8.
+
 ## 6. Multi-tenancy
 
 - `organizationId` on every tenant-owned row.
