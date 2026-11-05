@@ -36,7 +36,7 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 - **ReviewTask**: organizationId, type (`LOW_CONFIDENCE|CORRELATION|SCHEMA_FAILURE|OWNERSHIP`), refType, refId, status, assignedTo, resolution
 
 ### AI
-- **AnalysisRun**: organizationId, analyzer, itemId (nullable), messageId (nullable), provider, model, promptVersion, inputHash, output (json, validated), confidence, evidence (json), recommendedAction, requiresHumanApproval, status (`OK|SCHEMA_FAILED|REJECTED_GUARD`), tokensIn, tokensOut, createdAt. Unique (analyzer, inputHash, promptVersion) for caching.
+- **AnalysisRun**: organizationId, analyzer, itemId (nullable), messageId (nullable), provider, model, promptVersion, inputHash, output (json, validated), confidence, evidence (json), recommendedAction, requiresHumanApproval, status (`OK|SCHEMA_FAILED|REJECTED_GUARD`), tokensIn, tokensOut, createdAt. Unique (organizationId, analyzer, inputHash, promptVersion) for caching. The key is scoped by organization so a cache hit can never cross tenants.
 
 ### SLA
 - **SlaPolicy**: organizationId, name, scope (team/source/priority), ackTargetSec, responseTargetSec, resolveTargetSec, closeTargetSec, calendarId, warnAtPct
@@ -63,7 +63,10 @@ CorrelationCandidate N─1 TrackedItem
 ## Constraints and integrity
 
 - Dedup: unique (org, provider, externalMessageId) and (org, provider, externalThreadId). One open `TrackedItem` per `(organizationId, threadId)` (partial unique index where state ≠ CLOSED).
-- `LifecycleEvent` and `AuditLog`: INSERT-only grants for the app role; trigger rejects UPDATE/DELETE.
+- `LifecycleEvent`, `AuditLog` and `RawEvent`: append-only. The app role has INSERT and SELECT only (no UPDATE, DELETE or TRUNCATE grant), RLS has no UPDATE or DELETE policy, and triggers reject UPDATE, DELETE and TRUNCATE for every role including the owner. (A superuser can still disable triggers or set `session_replication_role`: a deliberate break-glass, never an app path.)
+- `AuditLog` hash chain: per organization. A BEFORE INSERT trigger takes a per-org advisory lock, assigns the next `seq`, sets `prevHash` to the previous row's `hash`, and computes `hash` = sha256 over seq, prevHash, org, actor, action, entity, metadata and timestamp. Caller-supplied values are overwritten. `audit_verify_chain(org)` returns NULL when intact, else the first bad `seq`; it requires `app.org_id` to equal `org` so RLS cannot hide rows and report a false pass. Limit: deleting the newest rows is undetectable without anchoring the head hash outside the database.
+- One open `TrackedItem` per thread is a partial unique index. Optional references (for example `MonitoredSource.teamId`, `Message.rawEventId`) are composite FKs on `(organizationId, id)` declared in migration SQL, because Prisma cannot express a composite FK with a nullable half; every FK between tenant tables is therefore same-tenant.
+- Encrypted columns (`Message.bodyText`, `RawEvent.payload`) are `Bytes`: `version | iv | tag | ciphertext`, AES-256-GCM with the row's context as AAD (`src/lib/crypto`).
 - Metric timestamps on `TrackedItem` are written only by the lifecycle module, in the same transaction as the event that causes them.
 - Reopen: new cycle number on events; prior timestamps preserved in events; item-level timestamps reflect the current cycle.
 - Encryption: message bodies, raw payloads, and credentials encrypted at the application layer (envelope encryption).

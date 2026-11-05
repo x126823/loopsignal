@@ -24,6 +24,7 @@ jobs:
       APP_DATABASE_URL: postgresql://loopsignal_app:loopsignal_app@localhost:5432/loopsignal?schema=public
       AUTH_SECRET: ci-only-secret-0123456789abcdef0123456789
       AUTH_DEV_LOGIN: "true"
+      FIELD_ENCRYPTION_KEY: AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4

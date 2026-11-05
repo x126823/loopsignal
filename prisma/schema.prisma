@@ -51,12 +51,13 @@ model Membership {
 }
 
 model Team {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
   name           String
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  organization   Organization  @relation(fields: [organizationId], references: [id])
   members        TeamMember[]
+  trackedItems   TrackedItem[]
 
   @@unique([organizationId, name])
   // Target of TeamMember's composite FK, so a member row can never point at another org's team.
@@ -75,4 +76,514 @@ model TeamMember {
 
   @@unique([teamId, userId])
   @@index([organizationId, userId])
+}
+
+// ===========================================================================
+// Sprint 2: core schema. Conventions:
+//  - every tenant table has organizationId (RLS + extension scope)
+//  - required relations use composite FKs (organizationId, id) so rows cannot cross tenants
+//  - optional/user FKs are declared in the migration SQL (Prisma cannot express a composite FK
+//    with a nullable half); those columns appear here as plain scalars
+//  - encrypted columns are Bytes: v1 | iv | tag | ciphertext (see src/lib/crypto)
+// ===========================================================================
+
+enum SourceProvider {
+  GMAIL
+  GOOGLE_CHAT
+  SYNTHETIC
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+  ERROR
+}
+
+enum MonitoredSourceKind {
+  MAILBOX
+  LABEL
+  SPACE
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum ItemState {
+  RECEIVED
+  ACKNOWLEDGED
+  RESPONDED
+  IN_PROGRESS
+  RESOLUTION_PROPOSED
+  RESOLUTION_CONFIRMED
+  CLOSED
+  REOPENED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MessageLinkRole {
+  ORIGIN
+  ACK
+  RESPONSE
+  PROGRESS
+  RESOLUTION
+  OTHER
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  ANALYZER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum CandidateStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum ReviewType {
+  LOW_CONFIDENCE
+  CORRELATION
+  SCHEMA_FAILURE
+  OWNERSHIP
+}
+
+enum ReviewStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum AnalysisStatus {
+  OK
+  SCHEMA_FAILED
+  REJECTED_GUARD
+}
+
+enum SlaTimerType {
+  ACK
+  RESPONSE
+  RESOLVE
+  CLOSE
+}
+
+enum SlaTimerState {
+  RUNNING
+  MET
+  WARNED
+  BREACHED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+// ---- Sources and ingestion -------------------------------------------------
+
+model SourceConnection {
+  id                     String            @id @default(uuid(7)) @db.Uuid
+  organizationId         String            @db.Uuid
+  provider               SourceProvider
+  ownerUserId            String            @db.Uuid
+  /// Reference to credentials held in the secret store; never the credentials themselves.
+  encryptedCredentialRef String?
+  scopes                 String[]
+  status                 ConnectionStatus  @default(ACTIVE)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  monitoredSources       MonitoredSource[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, provider])
+}
+
+model MonitoredSource {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  connectionId   String              @db.Uuid
+  kind           MonitoredSourceKind
+  externalId     String
+  teamId         String?             @db.Uuid
+  enabled        Boolean             @default(true)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  connection     SourceConnection    @relation(fields: [organizationId, connectionId], references: [organizationId, id])
+  messages       Message[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, kind, externalId])
+}
+
+/// Immutable record of what the provider sent. Append-only (trigger).
+model RawEvent {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  organizationId String         @db.Uuid
+  provider       SourceProvider
+  externalId     String
+  /// Encrypted JSON payload.
+  payload        Bytes
+  payloadHash    String
+  receivedAt     DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, externalId])
+}
+
+model Thread {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  organizationId   String         @db.Uuid
+  provider         SourceProvider
+  externalThreadId String
+  canonicalKey     String?
+  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
+  messages         Message[]
+  items            TrackedItem[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, externalThreadId])
+  @@index([organizationId, canonicalKey])
+}
+
+model Participant {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  address        String
+  displayName    String?
+  /// Link to an internal user when the address belongs to one (FK in migration SQL).
+  userId         String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, address])
+}
+
+model Message {
+  id                  String            @id @default(uuid(7)) @db.Uuid
+  organizationId      String            @db.Uuid
+  monitoredSourceId   String            @db.Uuid
+  threadId            String            @db.Uuid
+  provider            SourceProvider
+  externalMessageId   String
+  senderParticipantId String?           @db.Uuid
+  rawEventId          String?           @db.Uuid
+  sentAt              DateTime          @db.Timestamptz(3)
+  subject             String?
+  /// Encrypted message body.
+  bodyText            Bytes
+  bodyHash            String
+  direction           MessageDirection
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  monitoredSource     MonitoredSource   @relation(fields: [organizationId, monitoredSourceId], references: [organizationId, id])
+  thread              Thread            @relation(fields: [organizationId, threadId], references: [organizationId, id])
+  originOf            TrackedItem[]
+  itemLinks           ItemMessageLink[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, externalMessageId])
+  @@index([organizationId, threadId, sentAt])
+}
+
+// ---- Lifecycle -------------------------------------------------------------
+
+model TrackedItem {
+  id                         String                 @id @default(uuid(7)) @db.Uuid
+  organizationId             String                 @db.Uuid
+  teamId                     String                 @db.Uuid
+  ownerUserId                String?                @db.Uuid
+  originMessageId            String                 @db.Uuid
+  threadId                   String                 @db.Uuid
+  title                      String
+  priority                   Priority               @default(NORMAL)
+  /// Written only by src/modules/lifecycle (CLAUDE.md rule 1).
+  state                      ItemState              @default(RECEIVED)
+  slaPolicyId                String?                @db.Uuid
+  /// The four metrics, derived from events and never edited directly (rule 4).
+  ackAt                      DateTime?              @db.Timestamptz(3)
+  firstSubstantiveResponseAt DateTime?              @db.Timestamptz(3)
+  resolvedAt                 DateTime?              @db.Timestamptz(3)
+  closedAt                   DateTime?              @db.Timestamptz(3)
+  reopenCount                Int                    @default(0)
+  /// Optimistic concurrency token.
+  version                    Int                    @default(0)
+  needsReview                Boolean                @default(false)
+  createdAt                  DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt                  DateTime               @default(now()) @updatedAt @db.Timestamptz(3)
+  team                       Team                   @relation(fields: [organizationId, teamId], references: [organizationId, id])
+  thread                     Thread                 @relation(fields: [organizationId, threadId], references: [organizationId, id])
+  originMessage              Message                @relation(fields: [organizationId, originMessageId], references: [organizationId, id])
+  messageLinks               ItemMessageLink[]
+  events                     LifecycleEvent[]
+  ownerships                 ItemOwnership[]
+  approvals                  ApprovalRequest[]
+  correlationTargets         CorrelationCandidate[]
+  slaTimers                  SlaTimer[]
+  // One open item per thread: partial unique index (state <> CLOSED) is added in the migration SQL.
+
+  @@unique([organizationId, id])
+  @@index([organizationId, state, ownerUserId])
+  @@index([organizationId, teamId, state])
+}
+
+model ItemMessageLink {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  organizationId String          @db.Uuid
+  itemId         String          @db.Uuid
+  messageId      String          @db.Uuid
+  role           MessageLinkRole
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  item           TrackedItem     @relation(fields: [organizationId, itemId], references: [organizationId, id])
+  message        Message         @relation(fields: [organizationId, messageId], references: [organizationId, id])
+
+  @@unique([itemId, messageId])
+  @@index([organizationId, messageId])
+}
+
+/// Append-only (trigger). The source of truth for the four metrics.
+model LifecycleEvent {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  organizationId String      @db.Uuid
+  itemId         String      @db.Uuid
+  cycle          Int         @default(1)
+  fromState      ItemState?
+  toState        ItemState
+  actorType      ActorType
+  actorId        String?
+  analysisRunId  String?     @db.Uuid
+  evidence       Json?
+  reason         String?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  item           TrackedItem @relation(fields: [organizationId, itemId], references: [organizationId, id])
+
+  @@index([organizationId, itemId, createdAt])
+}
+
+model ItemOwnership {
+  id             String      @id @default(uuid(7)) @db.Uuid
+  organizationId String      @db.Uuid
+  itemId         String      @db.Uuid
+  userId         String      @db.Uuid
+  assignedBy     String?     @db.Uuid
+  assignedAt     DateTime    @default(now()) @db.Timestamptz(3)
+  endedAt        DateTime?   @db.Timestamptz(3)
+  item           TrackedItem @relation(fields: [organizationId, itemId], references: [organizationId, id])
+
+  @@index([organizationId, itemId])
+  @@index([organizationId, userId])
+}
+
+model ApprovalRequest {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  organizationId      String         @db.Uuid
+  itemId              String         @db.Uuid
+  requestedTransition ItemState
+  requestedBy         String?        @db.Uuid
+  status              ApprovalStatus @default(PENDING)
+  decidedBy           String?        @db.Uuid
+  decidedAt           DateTime?      @db.Timestamptz(3)
+  reason              String?
+  createdAt           DateTime       @default(now()) @db.Timestamptz(3)
+  item                TrackedItem    @relation(fields: [organizationId, itemId], references: [organizationId, id])
+
+  @@index([organizationId, status])
+  @@index([organizationId, itemId])
+}
+
+// ---- Correlation and review ------------------------------------------------
+
+model CorrelationCandidate {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  organizationId String          @db.Uuid
+  subjectType    String
+  subjectId      String          @db.Uuid
+  targetItemId   String          @db.Uuid
+  score          Float
+  rationale      Json
+  status         CandidateStatus @default(PENDING)
+  decidedBy      String?         @db.Uuid
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  targetItem     TrackedItem     @relation(fields: [organizationId, targetItemId], references: [organizationId, id])
+
+  @@index([organizationId, status])
+  @@index([organizationId, targetItemId])
+}
+
+model ReviewTask {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  type           ReviewType
+  refType        String
+  refId          String       @db.Uuid
+  status         ReviewStatus @default(OPEN)
+  assignedTo     String?      @db.Uuid
+  resolution     String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, status, type])
+  @@index([organizationId, refType, refId])
+}
+
+// ---- AI --------------------------------------------------------------------
+
+model AnalysisRun {
+  id                    String         @id @default(uuid(7)) @db.Uuid
+  organizationId        String         @db.Uuid
+  analyzer              String
+  itemId                String?        @db.Uuid
+  messageId             String?        @db.Uuid
+  provider              String
+  model                 String
+  promptVersion         String
+  inputHash             String
+  /// Zod-validated analyzer output. Contains no tokens or secrets.
+  output                Json
+  confidence            Float?
+  evidence              Json
+  recommendedAction     String?
+  requiresHumanApproval Boolean        @default(true)
+  status                AnalysisStatus
+  tokensIn              Int            @default(0)
+  tokensOut             Int            @default(0)
+  createdAt             DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+  // Scoped by organization (the design doc's key omitted it) so the cache can never cross tenants.
+  @@unique([organizationId, analyzer, inputHash, promptVersion])
+  @@index([organizationId, itemId])
+}
+
+// ---- SLA -------------------------------------------------------------------
+
+model BusinessCalendar {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  timezone       String
+  hours          Json
+  holidays       Json     @default("[]")
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+}
+
+model SlaPolicy {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  organizationId    String    @db.Uuid
+  name              String
+  /// Scope: any combination of team, monitored source and priority (all null = org default).
+  teamId            String?   @db.Uuid
+  monitoredSourceId String?   @db.Uuid
+  priority          Priority?
+  ackTargetSec      Int
+  responseTargetSec Int
+  resolveTargetSec  Int
+  closeTargetSec    Int
+  calendarId        String?   @db.Uuid
+  warnAtPct         Int       @default(80)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+}
+
+model SlaTimer {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  itemId         String        @db.Uuid
+  type           SlaTimerType
+  startedAt      DateTime      @db.Timestamptz(3)
+  dueAt          DateTime      @db.Timestamptz(3)
+  state          SlaTimerState @default(RUNNING)
+  resolvedAt     DateTime?     @db.Timestamptz(3)
+  item           TrackedItem   @relation(fields: [organizationId, itemId], references: [organizationId, id])
+  breaches       SlaBreach[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, state, dueAt])
+  @@index([organizationId, itemId])
+}
+
+model SlaBreach {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  timerId        String   @db.Uuid
+  breachedAt     DateTime @db.Timestamptz(3)
+  acknowledgedBy String?  @db.Uuid
+  timer          SlaTimer @relation(fields: [organizationId, timerId], references: [organizationId, id])
+
+  @@index([organizationId, timerId])
+}
+
+// ---- Notifications, audit, reporting ---------------------------------------
+
+model Notification {
+  id              String              @id @default(uuid(7)) @db.Uuid
+  organizationId  String              @db.Uuid
+  recipientUserId String              @db.Uuid
+  type            String
+  /// Ids and counts only; never message content.
+  payload         Json
+  channel         NotificationChannel @default(IN_APP)
+  readAt          DateTime?           @db.Timestamptz(3)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, recipientUserId, readAt])
+}
+
+model NotificationPreference {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  organizationId String              @db.Uuid
+  userId         String              @db.Uuid
+  type           String
+  channel        NotificationChannel
+  enabled        Boolean             @default(true)
+
+  @@unique([organizationId, userId, type, channel])
+}
+
+/// Append-only and hash-chained per organization. seq, prevHash and hash are assigned by a BEFORE INSERT
+/// trigger under a per-organization advisory lock; values supplied by the caller are overwritten.
+model AuditLog {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  seq            BigInt    @default(0)
+  actorType      ActorType
+  actorId        String?
+  action         String
+  entityType     String
+  entityId       String?
+  /// Ids and non-sensitive attributes only; never message content, tokens or secrets (rule 10).
+  metadata       Json      @default("{}")
+  prevHash       String?
+  hash           String    @default("")
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([organizationId, seq])
+  @@index([organizationId, entityType, entityId])
+}
+
+model MetricSnapshot {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  teamId         String?  @db.Uuid
+  period         String
+  metrics        Json
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, teamId, period])
 }

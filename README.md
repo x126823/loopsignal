@@ -11,7 +11,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) in review: organizations, users, memberships, teams, RLS, Auth.js, RBAC. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) in review: all models, append-only tables, hash-chained audit log, field encryption, synthetic scenario seed. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -45,12 +45,14 @@ nvm use            # Node 22 (.nvmrc)
 npm install
 docker compose up -d   # first run also creates the loopsignal_app DB role
 npm run db:migrate
-npm run db:seed        # synthetic users: alice|bob|carol|dave|erin|frank|gina@synthetic.loopsignal.test
+npm run db:seed        # idempotent; synthetic users, 2 orgs, 14 scenarios. Users: alice|bob|carol|dave|erin|frank|gina@synthetic.loopsignal.test
 npm run dev        # http://localhost:3000
 npm run worker     # BullMQ worker (no queues yet)
 ```
 
 Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.
+
+Set `FIELD_ENCRYPTION_KEY` (see `.env.example`; `openssl rand -base64 32`) before seeding, since message bodies are stored encrypted. The seed inserts items directly at their final state as a documented fixture exception until the lifecycle engine lands in Sprint 3.
 
 Dev login: set `AUTH_DEV_LOGIN=true` and sign in as any seeded synthetic email (no password; refused in production). If your Postgres volume predates Sprint 1, run `docker compose down -v` once so the runtime role is created.
 
