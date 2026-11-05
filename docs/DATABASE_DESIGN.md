@@ -67,7 +67,7 @@ CorrelationCandidate N─1 TrackedItem
 - Metric timestamps on `TrackedItem` are written only by the lifecycle module, in the same transaction as the event that causes them.
 - Reopen: new cycle number on events; prior timestamps preserved in events; item-level timestamps reflect the current cycle.
 - Encryption: message bodies, raw payloads, and credentials encrypted at the application layer (envelope encryption).
-- RLS: policy `organizationId = current_setting('app.org_id')::uuid` on all tenant tables; app role is non-superuser and non-owner.
+- RLS: policy `"organizationId" = app_org_id()` (reads `app.org_id`, NULL when unset) on all tenant tables, `FORCE`d; `Membership` also readable by `userId = app_user_id()`; `User` and `Organization` have their own policies (see migration `tenancy_core`). App role is non-superuser, non-owner, no `BYPASSRLS`, with per-table grants.
 
 ## Indexing (initial)
 

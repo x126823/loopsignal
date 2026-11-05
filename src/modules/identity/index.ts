@@ -1,2 +1,4 @@
 // Public API of the identity module. Other modules import only from here.
-export {};
+export { handlers, auth, signIn, signOut, SYNTHETIC_EMAIL_DOMAIN } from "./auth";
+export { resolvePrincipal } from "./principal";
+export { assertCan, can, ForbiddenError, type Action, type PolicyOptions, type Principal, type Resource } from "./rbac";

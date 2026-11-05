@@ -1,7 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// LoopSignal schema. Every tenant-owned table carries organizationId and is covered by RLS
+// (see the migration SQL). User is global but protected by its own RLS policies.
 
 generator client {
   provider = "prisma-client"
@@ -10,4 +8,71 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum Role {
+  ORG_ADMIN
+  TEAM_LEAD
+  MEMBER
+  VIEWER
+  AUDITOR
+}
+
+model Organization {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  name        String
+  settings    Json         @default("{}")
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  memberships Membership[]
+  teams       Team[]
+}
+
+/// Global identity. Visible only to itself and to members of a shared organization (RLS).
+model User {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  email       String       @unique
+  name        String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  memberships Membership[]
+  teamMembers TeamMember[]
+}
+
+model Membership {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  role           Role
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Team {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  members        TeamMember[]
+
+  @@unique([organizationId, name])
+  // Target of TeamMember's composite FK, so a member row can never point at another org's team.
+  @@unique([organizationId, id])
+}
+
+model TeamMember {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  organizationId String   @db.Uuid
+  teamId         String   @db.Uuid
+  userId         String   @db.Uuid
+  role           Role     @default(MEMBER)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  team           Team     @relation(fields: [organizationId, teamId], references: [organizationId, id])
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([organizationId, userId])
 }

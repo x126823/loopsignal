@@ -92,13 +92,18 @@ Guards (applied to every call):
 ## 6. Multi-tenancy
 
 - `organizationId` on every tenant-owned row.
-- Prisma client extension injects tenant scope from request/job context.
-- Postgres RLS policies keyed on `SET LOCAL app.org_id` as defense in depth.
-- Tests assert cross-tenant reads and writes fail.
+- All database access goes through `withTenant(ctx, fn)` in `src/lib/db`: one transaction per call that sets transaction-local settings (`set_config(..., true)`) and activates the Prisma tenant-scope extension. Raw SQL is available only on that transaction client, so RLS always applies.
+- The extension injects `organizationId` into reads and writes, rejects writes naming another org, and throws when there is no tenant context or the model needs an org the context lacks.
+- Postgres RLS is the backstop, keyed on three settings: `app.org_id` (tenant scope), `app.user_id` (own-row access, membership lookup, org switcher) and `app.login_email` (sign-in lookup only). Unset settings evaluate to NULL, so access fails closed.
+- Two connections: the owner (`DATABASE_URL`) runs migrations and test cleanup; the app connects as `loopsignal_app` (`APP_DATABASE_URL`), which is not a superuser, not the table owner, and lacks `BYPASSRLS`. Tables use `FORCE ROW LEVEL SECURITY`.
+- `User` is global but has its own policies: visible to itself, to the email being signed in, and to members of the active org. Child rows carry composite foreign keys (for example `TeamMember` to `Team` on `(organizationId, id)`) so a row cannot point across tenants.
+- Tests (`tests/integration`) assert cross-tenant reads and writes fail, once against RLS alone and once through the extension.
 
 ## 7. Authorization
 
-Roles: `ORG_ADMIN`, `TEAM_LEAD`, `MEMBER`, `VIEWER`, `AUDITOR`. Deny by default; policies are functions in `identity` and checked server-side on every action. Confirm and close require `MEMBER` on the owning team or higher, as configured per org.
+Roles: `ORG_ADMIN`, `TEAM_LEAD`, `MEMBER`, `VIEWER`, `AUDITOR`. Deny by default; policies are functions in `identity` and checked server-side on every action. Confirm and close require `MEMBER` on the owning team or higher, as configured per org (`approvalMinRole`). Org-level `VIEWER` and `AUDITOR` are capped at read-only regardless of team role. Principals are built from `Membership` and `TeamMember` rows (`resolvePrincipal`), never from the JWT.
+
+Authentication is Auth.js with JWT sessions carrying only the user id. Sign-in is invite-only: Google succeeds only for a verified email that already has a `User` row. A dev credentials provider accepts only `@synthetic.loopsignal.test` users and is refused in production.
 
 ## 8. SLA engine
 
