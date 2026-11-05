@@ -70,4 +70,23 @@ export default defineConfig([
       ],
     },
   },
+  // CLAUDE.md rules 1 and 6: AI modules return recommendations and never write state. The intelligence module may read
+  // lifecycle constants, but must not import anything that mutates items or approvals.
+  {
+    files: ["src/modules/intelligence/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/modules/lifecycle",
+              importNames: ["apply", "propose", "createItem", "decideApproval", "assignOwner"],
+              message: "Analyzers only recommend. Lifecycle mutators must be called by the caller, never from the intelligence module (rules 1 and 6).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

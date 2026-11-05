@@ -14,6 +14,14 @@ describe("parseEnv", () => {
     const env = parseEnv(valid);
     expect(env.NODE_ENV).toBe("development");
     expect(env.AUTH_DEV_LOGIN).toBe("false");
+    expect([env.LLM_PROVIDER, env.LLM_MODEL, env.LLM_EFFORT, env.LLM_DAILY_TOKEN_BUDGET]).toEqual(["fake", "claude-opus-5-5", "medium", 2_000_000]);
+  });
+
+  it("validates LLM settings", () => {
+    expect(parseEnv({ ...valid, LLM_PROVIDER: "claude", LLM_DAILY_TOKEN_BUDGET: "500000" }).LLM_DAILY_TOKEN_BUDGET).toBe(500_000);
+    expect(() => parseEnv({ ...valid, LLM_PROVIDER: "openai" })).toThrow(/LLM_PROVIDER/);
+    expect(() => parseEnv({ ...valid, LLM_DAILY_TOKEN_BUDGET: "-1" })).toThrow(/LLM_DAILY_TOKEN_BUDGET/);
+    expect(() => parseEnv({ ...valid, LLM_EFFORT: "max" })).toThrow(/LLM_EFFORT/);
   });
 
   it("rejects missing variables and names the keys", () => {
