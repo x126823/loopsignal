@@ -6,6 +6,7 @@ const valid = {
   APP_DATABASE_URL: "postgresql://a:p@localhost:5432/db",
   REDIS_URL: "redis://localhost:6379",
   AUTH_SECRET: "x".repeat(32),
+  FIELD_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
 };
 
 describe("parseEnv", () => {
@@ -16,7 +17,7 @@ describe("parseEnv", () => {
   });
 
   it("rejects missing variables and names the keys", () => {
-    expect(() => parseEnv({})).toThrow(/DATABASE_URL, APP_DATABASE_URL, REDIS_URL, AUTH_SECRET/);
+    expect(() => parseEnv({})).toThrow(/DATABASE_URL, APP_DATABASE_URL, REDIS_URL, AUTH_SECRET, FIELD_ENCRYPTION_KEY/);
   });
 
   it("does not leak values in the error message", () => {
@@ -25,6 +26,10 @@ describe("parseEnv", () => {
 
   it("rejects a short AUTH_SECRET", () => {
     expect(() => parseEnv({ ...valid, AUTH_SECRET: "short" })).toThrow(/AUTH_SECRET/);
+  });
+
+  it("rejects a FIELD_ENCRYPTION_KEY that is not 32 bytes", () => {
+    expect(() => parseEnv({ ...valid, FIELD_ENCRYPTION_KEY: "c2hvcnQ=" })).toThrow(/FIELD_ENCRYPTION_KEY/);
   });
 
   it("treats empty optional Google credentials as unset", () => {

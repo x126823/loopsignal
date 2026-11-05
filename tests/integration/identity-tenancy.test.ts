@@ -5,6 +5,7 @@ import { resolvePrincipal } from "@/modules/identity";
 import { can } from "@/modules/identity";
 import { findUserByEmail } from "@/modules/identity/users";
 import { createOrganization, listTeams, listUserOrganizations } from "@/modules/tenancy";
+import { purgeOrgs } from "../helpers/fixtures";
 
 const owner = createPrismaClient(process.env["DATABASE_URL"]!);
 
@@ -26,12 +27,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const orgs = [orgId, otherOrgId];
-  await owner.teamMember.deleteMany({ where: { organizationId: { in: orgs } } });
-  await owner.team.deleteMany({ where: { organizationId: { in: orgs } } });
-  await owner.membership.deleteMany({ where: { organizationId: { in: orgs } } });
+  await purgeOrgs(owner, [orgId, otherOrgId]);
   await owner.user.deleteMany({ where: { id: { in: [admin, member, outsider] } } });
-  await owner.organization.deleteMany({ where: { id: { in: orgs } } });
   await owner.$disconnect();
 });
 

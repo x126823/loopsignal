@@ -33,7 +33,17 @@ const contextSchema = z
 const store = new AsyncLocalStorage<TenantContext>();
 
 /** Models with a direct organizationId column. Everything here is scoped by the extension. */
-const ORG_SCOPED_MODELS = new Set(["Membership", "Team", "TeamMember"]);
+const ORG_SCOPED_MODELS = new Set([
+  "Membership", "Team", "TeamMember",
+  "SourceConnection", "MonitoredSource", "RawEvent", "Thread", "Participant", "Message", "TrackedItem",
+  "ItemMessageLink", "LifecycleEvent", "ItemOwnership", "ApprovalRequest", "CorrelationCandidate", "ReviewTask",
+  "AnalysisRun", "BusinessCalendar", "SlaPolicy", "SlaTimer", "SlaBreach", "Notification",
+  "NotificationPreference", "AuditLog", "MetricSnapshot",
+]);
+
+/** Append-only tables (triggers and grants enforce this too; rejecting here gives a clear error first). */
+const APPEND_ONLY_MODELS = new Set(["RawEvent", "LifecycleEvent", "AuditLog"]);
+const MUTATING_OPS = new Set(["update", "updateMany", "upsert", "delete", "deleteMany"]);
 
 const WHERE_OPS = new Set([
   "findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy", "updateMany", "deleteMany",
@@ -97,6 +107,9 @@ function createScopedClient(base: PrismaClient) {
             const ctx = store.getStore();
             if (!ctx) throw new Error("Database access outside a tenant context (use withTenant)");
             if (!ORG_SCOPED_MODELS.has(model)) return query(args); // Organization, User: RLS enforces
+            if (APPEND_ONLY_MODELS.has(model) && MUTATING_OPS.has(operation)) {
+              throw new Error(`${model} is append-only: ${operation} is not permitted`);
+            }
             if (!ctx.organizationId) {
               // Without an org, only the user's own memberships may be read (RLS enforces userId match).
               if (model === "Membership" && ctx.userId && WHERE_OPS.has(operation)) return query(args);

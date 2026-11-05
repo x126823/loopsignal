@@ -99,6 +99,10 @@ Guards (applied to every call):
 - `User` is global but has its own policies: visible to itself, to the email being signed in, and to members of the active org. Child rows carry composite foreign keys (for example `TeamMember` to `Team` on `(organizationId, id)`) so a row cannot point across tenants.
 - Tests (`tests/integration`) assert cross-tenant reads and writes fail, once against RLS alone and once through the extension.
 
+### Audit
+
+`recordAudit(tx, entry)` (module `audit`) appends to `AuditLog` inside the caller's transaction, so the audit row commits or rolls back with the change it records. Metadata keys that look like content or secrets (`body`, `subject`, `token`, `password`, and similar) are rejected (rule 10). The database assigns `seq` and the hash chain; `verifyAuditChain` checks it. Tenancy mutations (`addMembership`, `changeMembershipRole`, `createTeam`, `addTeamMember`) are authorized with `assertCan` and audited this way, and the last `ORG_ADMIN` cannot be demoted.
+
 ## 7. Authorization
 
 Roles: `ORG_ADMIN`, `TEAM_LEAD`, `MEMBER`, `VIEWER`, `AUDITOR`. Deny by default; policies are functions in `identity` and checked server-side on every action. Confirm and close require `MEMBER` on the owning team or higher, as configured per org (`approvalMinRole`). Org-level `VIEWER` and `AUDITOR` are capped at read-only regardless of team role. Principals are built from `Membership` and `TeamMember` rows (`resolvePrincipal`), never from the JWT.

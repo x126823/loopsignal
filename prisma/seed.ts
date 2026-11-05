@@ -1,6 +1,7 @@
 // Synthetic seed data only. Idempotent: safe to run repeatedly. Never put real people here.
 import { withTenant } from "../src/lib/db";
 import type { Role } from "../generated/prisma/enums";
+import { seedScenarios } from "./seed-scenarios";
 
 const DOMAIN = "synthetic.loopsignal.test";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -76,6 +77,11 @@ async function main(): Promise<void> {
       }),
     );
   }
+  await seedScenarios({
+    orgs: { acme: ORGS.acme, globex: ORGS.globex },
+    teams: { "acme:Support": TEAMS.acmeSupport, "acme:Billing": TEAMS.acmeBilling, "globex:Operations": TEAMS.globexOps },
+    userId: uid,
+  });
   console.log(`Seeded ${USERS.length} synthetic users, ${Object.keys(ORGS).length} orgs (login as <handle>@${DOMAIN}).`);
 }
 
