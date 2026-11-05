@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { redisConnection } from "./connection";
-import { analyzeMessageJob, deadLetterRecord, ingestSourceJob, jobIds } from "./jobs";
+import { analyzeMessageJob, deadLetterRecord, ingestSourceJob, jobIds, slaRiskJob, slaScanJob } from "./jobs";
 
 describe("redisConnection", () => {
   it("parses host, port, credentials and database", () => {
@@ -24,6 +24,15 @@ describe("job payloads carry ids only", () => {
   it("accepts ids", () => {
     expect(ingestSourceJob.parse({ organizationId: org, monitoredSourceId: randomUUID() })).toBeTruthy();
     expect(analyzeMessageJob.parse({ organizationId: org, messageId: randomUUID() })).toBeTruthy();
+  });
+  it("sla jobs: the scan carries nothing, a risk job carries three ids, and extras are rejected", () => {
+    const ids = { organizationId: org, itemId: randomUUID(), timerId: randomUUID() };
+    expect(slaScanJob.parse({})).toEqual({});
+    expect(() => slaScanJob.parse({ organizationId: org })).toThrow();
+    expect(slaRiskJob.parse(ids)).toEqual(ids);
+    expect(() => slaRiskJob.parse({ ...ids, note: "hello" })).toThrow();
+    expect(() => slaRiskJob.parse({ organizationId: org, itemId: randomUUID() })).toThrow();
+    expect(jobIds.slaRisk(ids)).toBe(`sla-risk-${ids.timerId}`);
   });
   it("rejects any extra field, so content cannot ride along", () => {
     expect(() => analyzeMessageJob.parse({ organizationId: org, messageId: randomUUID(), body: "hello" })).toThrow();

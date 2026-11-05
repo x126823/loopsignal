@@ -22,6 +22,7 @@
 | **SSRF / unsafe links** | Links in messages never fetched server-side; attachments metadata only in v1 |
 | **Secrets exposure** | Env validated; `.env` git-ignored; secret scanning in CI |
 | **Cost abuse (LLM)** | Per-org budget cap, input-hash cache, rate limits, size limits on content |
+| **Cross-tenant scan** (SLA scanner must find organizations without a tenant context) | One narrow `SECURITY DEFINER` function returns organization ids only (fixed `search_path`, revoked from `PUBLIC`, granted to the app role); all further access is tenant-scoped; tested that the app role cannot read policies directly. The migration role must bypass RLS |
 | **Job replay / duplicates** | Idempotent handlers keyed on external IDs; unique constraints |
 | **Dependency / supply chain** | Lockfile, audit in CI, minimal dependencies, pinned versions |
 

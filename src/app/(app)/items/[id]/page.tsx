@@ -9,13 +9,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { describeActor, formatDateTime, PRIORITY_LABEL, REVIEW_TYPE_LABEL, STATE_LABEL, TRANSITION_LABEL } from "@/lib/labels";
+import { systemClock } from "@/lib/clock";
 import { can } from "@/modules/identity";
 import { loadThreadMessages } from "@/modules/ingestion";
 import { listItemAnalysis } from "@/modules/intelligence";
 import { getApprovalPolicy, getItemDetail } from "@/modules/lifecycle";
+import { getItemTimers } from "@/modules/sla";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { availableTransitions, canDecideApproval, transitionButtonLabel } from "../../../_lib/available-actions";
 import { parseNotice } from "../../../_lib/notices";
+import { currentTimers, RISK_LABEL, RISK_TONE, riskHint, TIMER_LABEL, TIMER_STATE_LABEL, TIMER_STATE_TONE } from "../../../_lib/sla-display";
 import { requireContext } from "../../../_lib/session";
 import { assignOwnerAction, decideApprovalAction, transitionAction } from "../../actions";
 
@@ -42,11 +45,16 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
   const resource = { organizationId: ctx.org.id, teamId: item.teamId };
   const canAct = can(ctx.principal, "item:act", resource);
   const policy = await getApprovalPolicy(ctx.principal);
-  const [messages, analyses, candidates] = await Promise.all([
+  const [messages, analyses, candidates, allTimers] = await Promise.all([
     loadThreadMessages(ctx.org.id, item.threadId),
-    listItemAnalysis(ctx.org.id, item.id, 12),
+    listItemAnalysis(ctx.org.id, item.id, 30),
     canAct ? listTeamCandidates(ctx.org.id, item.teamId) : Promise.resolve([]),
+    getItemTimers(ctx.principal, item.id, { clock: systemClock }),
   ]);
+  const timers = currentTimers(allTimers ?? []);
+  const risk = riskHint(timers, analyses);
+  // The recommendations list is about decisions; the risk hint has its own place in the deadlines card.
+  const recommendations = analyses.filter((r) => r.analyzer !== "sla_risk_analyzer").slice(0, 12);
 
   const itemRef = { organizationId: ctx.org.id, state: item.state, teamId: item.teamId };
   const offered = availableTransitions(ctx.principal, itemRef, policy);
@@ -173,6 +181,33 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
             </CardContent>
           </Card>
 
+          {timers.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Deadlines</CardTitle>
+                <CardDescription>Each is measured from when the request arrived, in business time where a calendar applies.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                <ul className="flex flex-col gap-2 text-sm" data-testid="sla-timers">
+                  {timers.map((t) => (
+                    <li key={t.id} className="flex flex-wrap items-center justify-between gap-2" data-testid={`sla-${t.type.toLowerCase()}`}>
+                      <span>
+                        <span className="font-medium">{TIMER_LABEL[t.type]}</span>
+                        <span className="block text-xs text-muted-foreground">{t.resolvedAt && t.state !== "BREACHED" ? `Done ${formatDateTime(t.resolvedAt)}` : `Due ${formatDateTime(t.dueAt)}`}</span>
+                      </span>
+                      <Badge tone={TIMER_STATE_TONE[t.state]}>{TIMER_STATE_LABEL[t.state]}</Badge>
+                    </li>
+                  ))}
+                </ul>
+                {risk && (
+                  <p className="mt-1 text-xs text-muted-foreground" data-testid="sla-risk">
+                    <Badge tone={RISK_TONE[risk]}>{RISK_LABEL[risk]}</Badge> AI estimate of whether a due-soon deadline will be missed. A hint for people; it changes nothing.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Ownership</CardTitle>
@@ -199,9 +234,9 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
               <CardDescription>Suggestions only. Each cites exact words from the conversation.</CardDescription>
             </CardHeader>
             <CardContent>
-              {analyses.length === 0 ? <p className="text-sm text-muted-foreground">None yet.</p> : (
+              {recommendations.length === 0 ? <p className="text-sm text-muted-foreground">None yet.</p> : (
                 <ul className="flex flex-col gap-3 text-sm" data-testid="analyses">
-                  {analyses.map((r) => (
+                  {recommendations.map((r) => (
                     <li key={r.id}>
                       <p className="font-medium">{r.analyzer.replace(/_/g, " ")}</p>
                       <p className="text-xs text-muted-foreground">

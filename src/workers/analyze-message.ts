@@ -6,6 +6,7 @@ import {
   acknowledgmentDetector, attachRunsToItem, intentClassifier, ownershipResolver, progressAnalyzer, ProviderError, resolutionAnalyzer, runAnalyzer, substantiveResponseAnalyzer, transitionTarget,
   type AnalysisOutcome, type AnalyzerDefinition, type LLMProvider, type PipelineDeps,
 } from "@/modules/intelligence";
+import { resolvePolicyFor } from "@/modules/sla";
 import { createItem, findThreadItem, propose, queueReviewTask, type EngineOptions, type Outcome } from "@/modules/lifecycle";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { withTenant } from "@/lib/db";
@@ -197,9 +198,11 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
       }
     }
 
+    // The SLA policy is chosen once, at creation, from the item's scope. No policy configured means no timers (not an error).
+    const policy = await resolvePolicyFor(org, { teamId, monitoredSourceId: ctx.monitoredSourceId, priority: intent.result.priority });
     const created = await withTenant({ organizationId: org }, (tx) =>
       createItem(tx, {
-        organizationId: org, teamId, originMessageId: id, threadId: ctx.threadId, title: (ctx.subject ?? "(no subject)").slice(0, 200), priority: intent.result.priority,
+        organizationId: org, teamId, ...(policy ? { slaPolicyId: policy.id } : {}), originMessageId: id, threadId: ctx.threadId, title: (ctx.subject ?? "(no subject)").slice(0, 200), priority: intent.result.priority,
         ...(ownerUserId ? { ownerUserId } : {}), occurredAt: ctx.sentAt, actor: asAnalyzer(intentClassifier.name, intent), confidence: intent.confidence,
       }, d.engine));
     if (created.outcome === "EXISTS") return { status: "ITEM_EXISTS", itemId: created.itemId };

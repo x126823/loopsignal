@@ -2,7 +2,9 @@
 // organizations and items through the real lifecycle engine, so the Playwright process itself stays light.
 //   node --import tsx e2e/fixture-cli.ts <command> '<json args>'   ->  prints one line: @@JSON@@<result>
 import { createPrismaClient, withTenant } from "../src/lib/db";
+import { ManualClock } from "../src/lib/clock";
 import { apply, createItem, propose, queueReviewTask } from "../src/modules/lifecycle";
+import { createPolicy, reconcileItem } from "../src/modules/sla";
 import { purgeOrgs, syntheticEmail, testKey } from "../tests/helpers/fixtures";
 import { at, createEngineFixture, createMessage, createThreadWithMessage, engineOpts, type EngineFixture } from "../tests/helpers/engine-fixture";
 
@@ -54,6 +56,24 @@ const commands: Record<string, (args: never) => Promise<unknown>> = {
       });
     }
     return { itemId, threadId };
+  },
+
+  // An item with SLA timers built by the real SLA engine at fixed, explicit times (received at(0); optionally answered at(20)).
+  // The page reads the real clock, so anything still open there is long overdue, which is exactly what the test asserts.
+  async "new-sla-item"(a: { org: EngineFixture; title: string; replied?: boolean }) {
+    const f = a.org;
+    let policyId = (await owner.slaPolicy.findFirst({ where: { organizationId: f.organizationId } }))?.id;
+    if (!policyId) policyId = (await createPolicy(f.principals.admin, { name: "Default", ackTargetSec: 3600, responseTargetSec: 14_400, resolveTargetSec: 172_800, closeTargetSec: 259_200, warnAtPct: 80 })).id;
+    const { threadId, messageId } = await createThreadWithMessage(owner, f, "Our checkout page returns an error for every customer. Can you look into this urgently?", 0);
+    const created = await inOrg(f, (tx) => createItem(tx, { organizationId: f.organizationId, teamId: f.teamId, originMessageId: messageId, threadId, title: a.title, occurredAt: at(0), actor: SYSTEM, slaPolicyId: policyId }, engineOpts));
+    if (created.outcome !== "CREATED") throw new Error("item not created");
+    if (a.replied) {
+      await createMessage(owner, f, threadId, "Thanks, we have identified the cause on our side.", 20, "OUTBOUND");
+      const out = await inOrg(f, (tx) => propose(tx, { organizationId: f.organizationId, itemId: created.itemId, to: "RESPONDED", occurredAt: at(20), actor: SYSTEM }, engineOpts));
+      if (out.outcome !== "APPLIED") throw new Error(`respond: ${JSON.stringify(out)}`);
+    }
+    await reconcileItem(f.organizationId, created.itemId, { clock: new ManualClock(at(30)) });
+    return { itemId: created.itemId, threadId };
   },
 
   async "human-move"(a: { org: EngineFixture; itemId: string; to: "RESOLUTION_CONFIRMED" | "CLOSED" }) {

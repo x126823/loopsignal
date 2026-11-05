@@ -5,7 +5,7 @@ export { ClaudeProvider, type ClaudeClientLike, type ClaudeProviderOptions } fro
 export { FakeProvider, type FakeReply, type FakeResponder } from "./fake-provider";
 export { checkEvidence, forceApproval, type GuardFailure } from "./guard";
 export { attachRunsToItem, listItemAnalysis, runAnalyzer, type ItemAnalysisView, type AnalysisOutcome, type AnalyzeRequest, type FailureReason, type PipelineDeps } from "./pipeline";
-export { chooseNonce, delimiterNonce, systemPrompt, userPrompt, type PromptMessage } from "./prompt";
+export { chooseNonce, delimiterNonce, systemPrompt, userPrompt, validateFacts, type PromptFacts, type PromptMessage } from "./prompt";
 export { createProviderFromEnv } from "./provider-factory";
 export { redact, type RedactionKind, type RedactionResult } from "./redaction";
 export {
@@ -13,7 +13,7 @@ export {
   type AnalyzerDefinition, type AnalyzerOutput, type EvidenceItem, type RecommendedAction,
 } from "./schemas";
 export { ProviderError, type LLMProvider, type ProviderRequest, type ProviderResponse } from "./types";
-export { ANALYZERS, acknowledgmentDetector, intentClassifier, ownershipResolver, progressAnalyzer, resolutionAnalyzer, substantiveResponseAnalyzer, type AnalyzerName, type AcknowledgmentResult, type IntentResult, type OwnershipResult, type ProgressResult, type ResolutionResult, type SubstantiveResult } from "./analyzers";
+export { ANALYZERS, acknowledgmentDetector, intentClassifier, ownershipResolver, progressAnalyzer, resolutionAnalyzer, slaRiskAnalyzer, substantiveResponseAnalyzer, type AnalyzerName, type AcknowledgmentResult, type IntentResult, type OwnershipResult, type ProgressResult, type ResolutionResult, type SlaRiskResult, type SubstantiveResult } from "./analyzers";
 export { recommendThreshold, type Calibration, type Sample } from "./calibration";
 export { execute, prepare, type CoreMessage, type ExecResult, type Prepared } from "./core";
 export { HeuristicProvider } from "./heuristic-provider";

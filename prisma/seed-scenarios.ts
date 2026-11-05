@@ -12,11 +12,13 @@
  * nothing here touches a real provider.
  */
 import { createHash } from "node:crypto";
+import { ManualClock } from "../src/lib/clock";
 import { withTenant, type TenantTx } from "../src/lib/db";
 import { encryptField, parseFieldKey } from "../src/lib/crypto/fields";
 import { recordAudit } from "../src/modules/audit";
 import { resolvePrincipal, type Principal } from "../src/modules/identity";
 import { apply, createItem, propose, type EngineOptions } from "../src/modules/lifecycle";
+import { scanOrganization } from "../src/modules/sla";
 import type { ItemState, Priority } from "../generated/prisma/enums";
 
 const BASE = Date.parse("2026-10-05T09:00:00Z"); // fixed so reruns and tests are deterministic
@@ -208,11 +210,16 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
   });
   const calendar = await tx.businessCalendar.create({
     data: { id: stableId(`${org}:cal`), organizationId, timezone: "UTC",
-            hours: { mon: ["09:00", "17:00"], tue: ["09:00", "17:00"], wed: ["09:00", "17:00"], thu: ["09:00", "17:00"], fri: ["09:00", "17:00"] } },
+            hours: Object.fromEntries(["mon", "tue", "wed", "thu", "fri"].map((d) => [d, [["09:00", "17:00"]]])), holidays: [] },
   });
   const policy = await tx.slaPolicy.create({
     data: { id: stableId(`${org}:sla`), organizationId, name: "Default", ackTargetSec: 3600, responseTargetSec: 14_400,
             resolveTargetSec: 172_800, closeTargetSec: 259_200, calendarId: calendar.id, warnAtPct: 80 },
+  });
+  // Urgent items get tighter targets, around the clock (no calendar). The policy is picked once, at creation.
+  const urgentPolicy = await tx.slaPolicy.create({
+    data: { id: stableId(`${org}:sla:urgent`), organizationId, name: "Urgent", priority: "URGENT", ackTargetSec: 900, responseTargetSec: 3600,
+            resolveTargetSec: 14_400, closeTargetSec: 86_400, warnAtPct: 80 },
   });
   const sources = new Map<string, string>();
   for (const [channel, kind, externalId] of [["gmail", "MAILBOX", "support@synthetic.test"], ["chat", "SPACE", "spaces/synthetic-support"]] as const) {
@@ -279,7 +286,7 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
     const run = await intentRun(s.key, messageIds[0]!, first.text, true, confidence);
     const created = await must(`${s.key}: create`, createItem(tx, {
       organizationId, teamId: c.teamId(s.team), originMessageId: messageIds[0]!, threadId, title: s.subject, priority: s.priority ?? "NORMAL",
-      ...(s.owner ? { ownerUserId: c.userId(s.owner) } : {}), slaPolicyId: policy.id, occurredAt: at(first.atMin),
+      ...(s.owner ? { ownerUserId: c.userId(s.owner) } : {}), slaPolicyId: (s.priority === "URGENT" ? urgentPolicy : policy).id, occurredAt: at(first.atMin),
       actor: { type: "ANALYZER", analyzer: "intent_classifier", analysisRunId: run.id }, confidence,
     }, c.opts), ["CREATED"]);
     const itemId = (created as { itemId: string }).itemId;
@@ -313,19 +320,8 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
       }, c.opts), ["APPROVAL_REQUIRED"]);
     }
 
-    // 4. SLA timers (fixture; the SLA engine arrives in Sprint 8), derived from the engine's metrics.
-    const item = await tx.trackedItem.findUniqueOrThrow({ where: { id: itemId } });
-    const start = at(first.atMin).getTime();
-    for (const [type, targetSec, met] of [["ACK", policy.ackTargetSec, item.ackAt], ["RESPONSE", policy.responseTargetSec, item.firstSubstantiveResponseAt]] as const) {
-      const due = start + targetSec * 1000;
-      const state = met ? (met.getTime() <= due ? "MET" : "BREACHED") : due < NOW ? "BREACHED" : "RUNNING";
-      const timer = await tx.slaTimer.create({
-        data: { id: stableId(`${org}:timer:${s.key}:${type}`), organizationId, itemId, type, startedAt: new Date(start), dueAt: new Date(due), state, resolvedAt: met ?? null },
-      });
-      if (state === "BREACHED") {
-        await tx.slaBreach.create({ data: { id: stableId(`${org}:breach:${s.key}:${type}`), organizationId, timerId: timer.id, breachedAt: new Date(Math.min(NOW, met?.getTime() ?? NOW)) } });
-      }
-    }
+    // 4. SLA timers are not written here: the SLA engine derives them from the events above once this transaction commits
+    //    (see seedScenarios), with a fixed clock so the fixtures are deterministic.
     count++;
   }
 
@@ -385,6 +381,11 @@ export async function seedScenarios(ids: {
         teamId: (name) => ids.teams[`${org}:${name}`] ?? (() => { throw new Error(`Unknown team ${org}:${name}`); })(),
         principal: (h) => principals.get(h) ?? (() => { throw new Error(`No principal for ${h}`); })(),
       }, org));
+    // Timers come from the real SLA engine, run at the fixture clock. It is idempotent, so a replay changes nothing.
+    if (n > 0) {
+      const scan = await scanOrganization(organizationId, { clock: new ManualClock(new Date(NOW)) });
+      if (scan.failures > 0) throw new Error(`SLA scan failed for ${scan.failures} seeded item(s) in ${org}`);
+    }
     console.log(n === 0 ? `Scenarios for ${org}: already seeded` : `Scenarios for ${org}: seeded ${n}`);
     await ensureIngestSource(org, organizationId, ids.teams[org === "acme" ? "acme:Support" : "globex:Operations"]!);
   }

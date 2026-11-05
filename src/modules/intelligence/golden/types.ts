@@ -25,19 +25,22 @@ export interface GoldenCase<E> {
   note?: string;
   messages: GoldenMessage[];
   candidates?: GoldenCandidate[];
+  /** System-measured facts passed alongside the messages (SLA risk only). */
+  facts?: Record<string, string | number | boolean>;
   expected: E;
 }
 
 const T0 = Date.UTC(2026, 9, 5, 9, 0);
 
 /** Build a case from a compact list of ["in" | "out" | "int", text]. The LAST message is the one being analyzed. */
-export function goldenCase<E>(id: string, expected: E, turns: Array<["in" | "out" | "int", string]>, opts: { note?: string; candidates?: GoldenCandidate[] } = {}): GoldenCase<E> {
+export function goldenCase<E>(id: string, expected: E, turns: Array<["in" | "out" | "int", string]>, opts: { note?: string; candidates?: GoldenCandidate[]; facts?: Record<string, string | number | boolean> } = {}): GoldenCase<E> {
   const dir = { in: "INBOUND", out: "OUTBOUND", int: "INTERNAL" } as const;
   return {
     id,
     expected,
     ...(opts.note ? { note: opts.note } : {}),
     ...(opts.candidates ? { candidates: opts.candidates } : {}),
+    ...(opts.facts ? { facts: opts.facts } : {}),
     messages: turns.map(([d, text], i) => ({ id: gid(`${id}:${i}`), direction: dir[d], sentAt: new Date(T0 + i * 600_000), text })),
   };
 }

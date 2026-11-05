@@ -6,7 +6,7 @@ import { getEnv } from "@/lib/env";
 import { log } from "@/lib/log";
 import { DEFAULT_CONFIDENCE_THRESHOLD } from "@/modules/lifecycle";
 import { execute, prepare, type CoreMessage, type FailureReason } from "./core";
-import type { PromptCandidate } from "./prompt";
+import type { PromptCandidate, PromptFacts } from "./prompt";
 import { analyzerOutputSchema, type AnalyzerDefinition, type EvidenceItem, type RecommendedAction } from "./schemas";
 import type { LLMProvider } from "./types";
 
@@ -21,6 +21,8 @@ export interface AnalyzeRequest {
   itemId?: string;
   /** People the analyzer may choose from (for example team members). Part of the input hash and the untrusted block. */
   candidates?: PromptCandidate[];
+  /** System-measured numbers and tokens (for example SLA progress). Validated; part of the input hash. */
+  facts?: PromptFacts;
 }
 
 export interface PipelineDeps {
@@ -97,7 +99,7 @@ export async function runAnalyzer<R>(def: AnalyzerDefinition<R>, req: AnalyzeReq
 
   // 3-4. Redact, hash and delimit (shared with golden-set evaluation).
   const coreMessages: CoreMessage[] = ordered.map((m) => ({ id: m.id, direction: m.direction, sentAt: m.sentAt, text: originals.get(m.id)! }));
-  const prepared = prepare(def, coreMessages, req.candidates ?? [], deps.provider, fieldKey);
+  const prepared = prepare(def, coreMessages, req.candidates ?? [], deps.provider, fieldKey, req.facts ?? {});
   const { inputHash } = prepared;
 
   // 5. Cache.
@@ -148,7 +150,7 @@ function orgBudget(settings: unknown): number | undefined {
 }
 
 /**
- * Record a failed analysis and queue a human review task. The raw model output is deliberately NOT stored: it can
+ * Record a failed analysis and queue a human review task (except for advisory analyzers, which only keep the record). The raw model output is deliberately NOT stored: it can
  * contain echoed message content. The row gets a unique input hash so failures never block a later successful run
  * for the same input (the cache key is unique); the real hash is not needed to diagnose a failure.
  */
@@ -165,6 +167,7 @@ async function recordFailure<R>(
         evidence: [], requiresHumanApproval: true, status, tokensIn: tokens.tokensIn, tokensOut: tokens.tokensOut,
       },
     });
+    if (def.advisory) return { runId: run.id, taskId: null };
     const task = await tx.reviewTask.create({ data: { organizationId: req.organizationId, type: "SCHEMA_FAILURE", refType: "AnalysisRun", refId: run.id } });
     return { runId: run.id, taskId: task.id };
   });
@@ -188,6 +191,8 @@ export interface ItemAnalysisView {
   confidence: number | null;
   requiresHumanApproval: boolean;
   evidence: Array<{ messageId: string; quote: string }>;
+  /** The analyzer's own validated result (for example `{ risk: "HIGH" }`). Enums, booleans and ids only. */
+  result: unknown;
   createdAt: Date;
 }
 
@@ -196,7 +201,7 @@ export async function listItemAnalysis(organizationId: string, itemId: string, l
   return withTenant({ organizationId }, async (tx) => {
     const runs = await tx.analysisRun.findMany({ where: { itemId, status: "OK" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit });
     return runs.map((r) => ({
-      id: r.id, analyzer: r.analyzer, recommendedAction: r.recommendedAction, confidence: r.confidence, requiresHumanApproval: r.requiresHumanApproval, createdAt: r.createdAt,
+      id: r.id, analyzer: r.analyzer, recommendedAction: r.recommendedAction, confidence: r.confidence, requiresHumanApproval: r.requiresHumanApproval, createdAt: r.createdAt, result: (r.output as { result?: unknown } | null)?.result ?? null,
       evidence: Array.isArray(r.evidence) ? (r.evidence as Array<{ messageId?: unknown; quote?: unknown }>).flatMap((e) => (typeof e?.quote === "string" && typeof e?.messageId === "string" ? [{ messageId: e.messageId, quote: e.quote }] : [])) : [],
     }));
   });
