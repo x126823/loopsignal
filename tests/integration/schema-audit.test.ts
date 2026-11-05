@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPrismaClient, withTenant } from "@/lib/db";
 import { recordAudit, verifyAuditChain } from "@/modules/audit";
-import { createOrgFixture, purgeOrgs, type OrgFixture } from "../helpers/fixtures";
+import { asLifecycleWriter, createOrgFixture, purgeOrgs, type OrgFixture } from "../helpers/fixtures";
 
 const owner = createPrismaClient(process.env["DATABASE_URL"]!);
 const raw = createPrismaClient(process.env["APP_DATABASE_URL"]!);
@@ -57,7 +57,7 @@ describe("append-only tables reject UPDATE, DELETE and TRUNCATE", () => {
 
   beforeAll(async () => {
     eventId = (await owner.lifecycleEvent.create({
-      data: { organizationId: a.organizationId, itemId: a.itemId, toState: "RECEIVED", actorType: "SYSTEM" },
+      data: { organizationId: a.organizationId, itemId: a.itemId, seq: 1, toState: "RECEIVED", actorType: "SYSTEM" },
     })).id;
     rawEventId = (await owner.rawEvent.create({
       data: { organizationId: a.organizationId, provider: "SYNTHETIC", externalId: randomUUID(), payload: Buffer.from("x"), payloadHash: "h" },
@@ -181,11 +181,11 @@ describe("audit hash chain", () => {
 
 describe("integrity constraints", () => {
   it("allows one open item per thread and frees the thread once CLOSED", async () => {
-    const dup = () => owner.trackedItem.create({
+    const dup = () => asLifecycleWriter(owner, (tx) => tx.trackedItem.create({
       data: { organizationId: a.organizationId, teamId: a.teamId, originMessageId: a.messageId, threadId: a.threadId, title: "dup" },
-    });
+    }));
     await expect(dup()).rejects.toThrow();
-    await owner.$executeRawUnsafe(`UPDATE "TrackedItem" SET state = 'CLOSED' WHERE id = '${a.itemId}'`);
+    await asLifecycleWriter(owner, (tx) => tx.$executeRawUnsafe(`UPDATE "TrackedItem" SET state = 'CLOSED' WHERE id = '${a.itemId}'`));
     const second = await dup();
     expect(second.id).not.toBe(a.itemId);
     await expect(dup()).rejects.toThrow();
@@ -200,9 +200,9 @@ describe("integrity constraints", () => {
   });
 
   it("rejects cross-tenant references (required and optional FKs)", async () => {
-    await expect(owner.trackedItem.create({
+    await expect(asLifecycleWriter(owner, (tx) => tx.trackedItem.create({
       data: { organizationId: a.organizationId, teamId: b.teamId, originMessageId: a.messageId, threadId: randomUUID(), title: "x" },
-    })).rejects.toThrow();
+    }))).rejects.toThrow();
     await expect(owner.monitoredSource.create({
       data: { organizationId: a.organizationId, connectionId: a.connectionId, kind: "LABEL", externalId: "x", teamId: b.teamId },
     })).rejects.toThrow();
@@ -219,7 +219,7 @@ describe("integrity constraints", () => {
     await expect(run(1.5)).rejects.toThrow();
     await expect(run(0.9)).resolves.toBeTruthy();
     await expect(owner.lifecycleEvent.create({
-      data: { organizationId: a.organizationId, itemId: a.itemId, cycle: 0, toState: "RECEIVED", actorType: "SYSTEM" },
+      data: { organizationId: a.organizationId, itemId: a.itemId, seq: 2, cycle: 0, toState: "RECEIVED", actorType: "SYSTEM" },
     })).rejects.toThrow();
   });
 

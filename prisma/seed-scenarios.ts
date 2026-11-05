@@ -2,11 +2,11 @@
  * Synthetic scenario generator. Synthetic data only (CLAUDE.md rule 7): every address ends in
  * .synthetic.test and the connection provider is SYNTHETIC.
  *
- * FIXTURE EXCEPTION to rule 1: this file writes TrackedItem.state (and the derived metric timestamps) directly,
- * because the lifecycle engine does not exist until Sprint 3. It stays consistent by writing the matching
- * LifecycleEvent and AuditLog rows, deriving the four metrics by replaying the steps, and refusing to emit a
- * RESOLUTION_CONFIRMED or CLOSED step that is not performed by a human (rule 2). Sprint 3 replaces this with
- * scenarios driven through the engine.
+ * Scenarios are driven through the lifecycle engine (createItem, propose, apply). Nothing here writes
+ * TrackedItem state or the four metrics: the engine validates every step, derives the metrics from the events,
+ * links messages, records approvals and writes the AuditLog. Human-only steps (confirm, close, reopen) are
+ * performed by real seeded principals; analyzer steps carry an AnalysisRun and verbatim evidence, and the engine
+ * rejects them otherwise. (Replaces the Sprint 2 direct-insert fixture.)
  *
  * Message and thread providers are GMAIL or GOOGLE_CHAT so cross-channel scenarios are representable;
  * nothing here touches a real provider.
@@ -15,7 +15,9 @@ import { createHash } from "node:crypto";
 import { withTenant, type TenantTx } from "../src/lib/db";
 import { encryptField, parseFieldKey } from "../src/lib/crypto/fields";
 import { recordAudit } from "../src/modules/audit";
-import type { ItemState, MessageLinkRole, Priority } from "../generated/prisma/enums";
+import { resolvePrincipal, type Principal } from "../src/modules/identity";
+import { apply, createItem, propose, type EngineOptions } from "../src/modules/lifecycle";
+import type { ItemState, Priority } from "../generated/prisma/enums";
 
 const BASE = Date.parse("2026-10-05T09:00:00Z"); // fixed so reruns and tests are deterministic
 const NOW = BASE + 2 * 24 * 60 * 60 * 1000; // "current time" for SLA timer states in fixtures
@@ -183,43 +185,16 @@ const SCENARIOS: Scenario[] = [
     steps: [{ to: "RESPONDED", msg: 1, actor: "SYSTEM", analyzer: "substantive_response", confidence: 0.9, evidence: "schedule for next week is posted" }] },
 ];
 
-const ROLE_FOR: Partial<Record<ItemState, MessageLinkRole>> = {
-  ACKNOWLEDGED: "ACK", RESPONDED: "RESPONSE", IN_PROGRESS: "PROGRESS", RESOLUTION_PROPOSED: "RESOLUTION",
-};
-
-interface Derived {
-  state: ItemState; cycle: number; reopenCount: number;
-  ackAt: Date | null; firstSubstantiveResponseAt: Date | null; resolvedAt: Date | null; closedAt: Date | null;
-  events: Array<{ step: Step; from: ItemState | null; cycle: number; when: Date }>;
-}
-
-/** Replay steps to derive state, cycle, and the four metrics (never hand-edited timestamps, rule 4). */
-function derive(s: Scenario): Derived {
-  const d: Derived = { state: "RECEIVED", cycle: 1, reopenCount: 0, ackAt: null, firstSubstantiveResponseAt: null, resolvedAt: null, closedAt: null, events: [] };
-  let prev: ItemState | null = null;
-  for (const step of s.steps) {
-    if ((step.to === "RESOLUTION_CONFIRMED" || step.to === "CLOSED") && step.actor !== "USER") {
-      throw new Error(`Scenario ${s.key}: ${step.to} requires a human actor (rule 2)`);
-    }
-    const when = step.msg !== undefined ? at(s.messages[step.msg]!.atMin) : at(step.atMin!);
-    if (step.to === "REOPENED") {
-      d.cycle += 1; d.reopenCount += 1;
-      d.ackAt = d.firstSubstantiveResponseAt = d.resolvedAt = d.closedAt = null; // item-level metrics reflect the current cycle
-    }
-    if (step.to === "ACKNOWLEDGED") d.ackAt ??= when;
-    if (step.to === "RESPONDED") d.firstSubstantiveResponseAt ??= when;
-    if (step.to === "RESOLUTION_CONFIRMED") d.resolvedAt = when;
-    if (step.to === "CLOSED") d.closedAt = when;
-    d.events.push({ step, from: prev ?? "RECEIVED", cycle: d.cycle, when });
-    prev = step.to;
-    d.state = step.to;
-  }
-  return d;
-}
-
 interface Ctx {
-  tx: TenantTx; organizationId: string; key: Buffer;
+  tx: TenantTx; organizationId: string; key: Buffer; opts: EngineOptions;
   userId: (handle: string) => string; teamId: (name: string) => string;
+  principal: (handle: string) => Principal;
+}
+
+async function must<T extends { outcome: string }>(what: string, p: Promise<T>, ok: string[]): Promise<T> {
+  const out = await p;
+  if (!ok.includes(out.outcome)) throw new Error(`Seed step "${what}" failed: ${JSON.stringify(out)}`);
+  return out;
 }
 
 async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
@@ -246,6 +221,14 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
     });
     sources.set(channel, src.id);
   }
+
+  const intentRun = (key: string, messageId: string, text: string, actionable: boolean, confidence: number, itemId?: string) =>
+    tx.analysisRun.create({
+      data: { id: stableId(`${org}:run:${key}:intent`), organizationId, analyzer: "intent_classifier", itemId: itemId ?? null, messageId,
+              provider: "fake", model: "fake-1", promptVersion: "v1", inputHash: sha(text), output: { actionable }, confidence,
+              evidence: actionable ? [{ quote: text.slice(0, 40) }] : [], recommendedAction: actionable ? (confidence < 0.8 ? "NEEDS_REVIEW" : "TRACK") : "NOT_ACTIONABLE",
+              requiresHumanApproval: confidence < 0.8, status: "OK" },
+    });
 
   let count = 0;
   for (const s of SCENARIOS.filter((x) => x.org === org)) {
@@ -283,96 +266,61 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
       });
     }
 
+    const first = s.messages[0]!;
     if (s.noItem) {
-      await tx.analysisRun.create({
-        data: { id: stableId(`${org}:run:${s.key}:intent`), organizationId, analyzer: "intent_classifier", messageId: messageIds[0]!,
-                provider: "fake", model: "fake-1", promptVersion: "v1", inputHash: sha(s.messages[0]!.text),
-                output: { actionable: false }, confidence: 0.97, evidence: [], recommendedAction: "NOT_ACTIONABLE", requiresHumanApproval: false, status: "OK" },
-      });
+      await intentRun(s.key, messageIds[0]!, first.text, false, 0.97);
       count++;
       continue;
     }
 
-    const d = derive(s);
-    const itemId = stableId(`${org}:item:${s.key}`);
-    await tx.trackedItem.create({
-      data: { id: itemId, organizationId, teamId: c.teamId(s.team), ownerUserId: s.owner ? c.userId(s.owner) : null,
-              originMessageId: messageIds[0]!, threadId, title: s.subject, priority: s.priority ?? "NORMAL", state: d.state,
-              slaPolicyId: policy.id, ackAt: d.ackAt, firstSubstantiveResponseAt: d.firstSubstantiveResponseAt,
-              resolvedAt: d.resolvedAt, closedAt: d.closedAt, reopenCount: d.reopenCount, version: d.events.length,
-              needsReview: s.needsReview ?? false, createdAt: at(s.messages[0]!.atMin) },
-    });
-    if (s.owner) {
-      await tx.itemOwnership.create({ data: { id: stableId(`${org}:own:${s.key}`), organizationId, itemId, userId: c.userId(s.owner), assignedAt: at(s.messages[0]!.atMin) } });
-    }
+    // 1. Intent classification recommends tracking; the engine creates the item (low confidence => flagged for review).
+    const lowConfidence = s.needsReview === true;
+    const confidence = lowConfidence ? 0.41 : 0.97;
+    const run = await intentRun(s.key, messageIds[0]!, first.text, true, confidence);
+    const created = await must(`${s.key}: create`, createItem(tx, {
+      organizationId, teamId: c.teamId(s.team), originMessageId: messageIds[0]!, threadId, title: s.subject, priority: s.priority ?? "NORMAL",
+      ...(s.owner ? { ownerUserId: c.userId(s.owner) } : {}), slaPolicyId: policy.id, occurredAt: at(first.atMin),
+      actor: { type: "ANALYZER", analyzer: "intent_classifier", analysisRunId: run.id }, confidence,
+    }, c.opts), ["CREATED"]);
+    const itemId = (created as { itemId: string }).itemId;
 
-    const links = new Map<number, MessageLinkRole>([[0, "ORIGIN"]]);
-    for (const e of d.events) if (e.step.msg !== undefined && !links.has(e.step.msg)) links.set(e.step.msg, ROLE_FOR[e.step.to] ?? "OTHER");
-    for (const [i, role] of links) {
-      await tx.itemMessageLink.create({ data: { id: stableId(`${org}:link:${s.key}:${i}`), organizationId, itemId, messageId: messageIds[i]!, role } });
-    }
-
-    // RECEIVED: the creation event.
-    await tx.lifecycleEvent.create({
-      data: { id: stableId(`${org}:ev:${s.key}:0`), organizationId, itemId, cycle: 1, fromState: null, toState: "RECEIVED",
-              actorType: "SYSTEM", reason: "Actionable message received", createdAt: at(s.messages[0]!.atMin) },
-    });
-    await recordAudit(tx, { organizationId, actorType: "SYSTEM", action: "item.created", entityType: "TrackedItem", entityId: itemId, metadata: { toState: "RECEIVED", fixture: true } });
-
-    for (const [n, e] of d.events.entries()) {
-      const { step } = e;
-      let analysisRunId: string | undefined;
-      if (step.analyzer) {
-        const msg = s.messages[step.msg!]!;
-        if (!step.evidence || !msg.text.includes(step.evidence)) throw new Error(`Scenario ${s.key}: evidence must be a verbatim substring of the message (rule 6)`);
-        analysisRunId = stableId(`${org}:run:${s.key}:${n}`);
-        await tx.analysisRun.create({
-          data: { id: analysisRunId, organizationId, analyzer: step.analyzer, itemId, messageId: messageIds[step.msg!]!, provider: "fake",
-                  model: "fake-1", promptVersion: "v1", inputHash: sha(`${s.key}:${n}:${msg.text}`),
-                  output: { to: step.to }, confidence: step.confidence ?? null, evidence: [{ quote: step.evidence }],
+    // 2. Replay the scenario's steps through the engine.
+    for (const [n, step] of s.steps.entries()) {
+      const occurredAt = step.msg !== undefined ? at(s.messages[step.msg]!.atMin) : at(step.atMin!);
+      const messageId = step.msg !== undefined ? messageIds[step.msg] : undefined;
+      const evidence = step.evidence ? [{ quote: step.evidence }] : undefined;
+      const common = { organizationId, itemId, to: step.to, occurredAt, ...(messageId ? { messageId } : {}), ...(evidence ? { evidence } : {}), ...(step.reason ? { reason: step.reason } : {}) };
+      if (step.actor === "USER") {
+        await must(`${s.key}: ${step.to}`, apply(tx, { ...common, actor: { type: "USER", principal: c.principal(step.by!) } }, c.opts), ["APPLIED"]);
+      } else {
+        const stepRun = await tx.analysisRun.create({
+          data: { id: stableId(`${org}:run:${s.key}:${n}`), organizationId, analyzer: step.analyzer!, itemId, messageId: messageId ?? null, provider: "fake",
+                  model: "fake-1", promptVersion: "v1", inputHash: sha(`${s.key}:${n}:${s.messages[step.msg!]!.text}`),
+                  output: { to: step.to }, confidence: step.confidence ?? null, evidence: evidence ?? [],
                   recommendedAction: `TRANSITION_${step.to}`, requiresHumanApproval: false, status: "OK" },
         });
-      }
-      const actorId = step.actor === "USER" ? c.userId(step.by!) : null;
-      await tx.lifecycleEvent.create({
-        data: { id: stableId(`${org}:ev:${s.key}:${n + 1}`), organizationId, itemId, cycle: e.cycle, fromState: e.from, toState: step.to,
-                actorType: step.actor, actorId, analysisRunId: analysisRunId ?? null,
-                evidence: step.evidence ? [{ quote: step.evidence }] : undefined, reason: step.reason ?? null, createdAt: e.when },
-      });
-      await recordAudit(tx, {
-        organizationId, actorType: step.actor, actorId: actorId ?? undefined, action: "item.transitioned", entityType: "TrackedItem",
-        entityId: itemId, metadata: { fromState: e.from, toState: step.to, cycle: e.cycle, fixture: true },
-      });
-      if (step.actor === "USER" && (step.to === "RESOLUTION_CONFIRMED" || step.to === "CLOSED")) {
-        await tx.approvalRequest.create({
-          data: { id: stableId(`${org}:appr:${s.key}:${n}`), organizationId, itemId, requestedTransition: step.to, status: "APPROVED",
-                  decidedBy: actorId, decidedAt: e.when, reason: step.reason ?? null, createdAt: e.when },
-        });
+        await must(`${s.key}: ${step.to}`, propose(tx, {
+          ...common, actor: { type: "ANALYZER", analyzer: step.analyzer!, analysisRunId: stepRun.id }, ...(step.confidence !== undefined ? { confidence: step.confidence } : {}),
+        }, c.opts), ["APPLIED"]);
       }
     }
 
-    if (d.state === "RESOLUTION_PROPOSED") {
-      await tx.approvalRequest.create({
-        data: { id: stableId(`${org}:appr:${s.key}:pending`), organizationId, itemId, requestedTransition: "RESOLUTION_CONFIRMED", status: "PENDING" },
-      });
-    }
-    if (s.needsReview) {
-      await tx.reviewTask.create({ data: { id: stableId(`${org}:review:${s.key}`), organizationId, type: "LOW_CONFIDENCE", refType: "TrackedItem", refId: itemId } });
-      await tx.analysisRun.create({
-        data: { id: stableId(`${org}:run:${s.key}:intent`), organizationId, analyzer: "intent_classifier", itemId, messageId: messageIds[0]!, provider: "fake",
-                model: "fake-1", promptVersion: "v1", inputHash: sha(s.messages[0]!.text), output: { actionable: true }, confidence: 0.41,
-                evidence: [{ quote: "Maybe someone could look at the reports" }], recommendedAction: "NEEDS_REVIEW", requiresHumanApproval: true, status: "OK" },
-      });
+    // 3. A proposed resolution waits for a human: the system suggests confirmation and the engine queues the approval.
+    const last = s.steps.at(-1);
+    if (last?.to === "RESOLUTION_PROPOSED") {
+      await must(`${s.key}: queue approval`, propose(tx, {
+        organizationId, itemId, to: "RESOLUTION_CONFIRMED", occurredAt: at(s.messages[last.msg!]!.atMin + 1), actor: { type: "SYSTEM" }, reason: "Awaiting customer or owner confirmation",
+      }, c.opts), ["APPROVAL_REQUIRED"]);
     }
 
-    // SLA timers for the first two targets, with states derived against the fixed fixture clock.
-    const start = at(s.messages[0]!.atMin).getTime();
-    for (const [type, targetSec, met] of [["ACK", policy.ackTargetSec, d.ackAt], ["RESPONSE", policy.responseTargetSec, d.firstSubstantiveResponseAt]] as const) {
+    // 4. SLA timers (fixture; the SLA engine arrives in Sprint 8), derived from the engine's metrics.
+    const item = await tx.trackedItem.findUniqueOrThrow({ where: { id: itemId } });
+    const start = at(first.atMin).getTime();
+    for (const [type, targetSec, met] of [["ACK", policy.ackTargetSec, item.ackAt], ["RESPONSE", policy.responseTargetSec, item.firstSubstantiveResponseAt]] as const) {
       const due = start + targetSec * 1000;
       const state = met ? (met.getTime() <= due ? "MET" : "BREACHED") : due < NOW ? "BREACHED" : "RUNNING";
       const timer = await tx.slaTimer.create({
-        data: { id: stableId(`${org}:timer:${s.key}:${type}`), organizationId, itemId, type, startedAt: new Date(start), dueAt: new Date(due),
-                state, resolvedAt: met ?? null },
+        data: { id: stableId(`${org}:timer:${s.key}:${type}`), organizationId, itemId, type, startedAt: new Date(start), dueAt: new Date(due), state, resolvedAt: met ?? null },
       });
       if (state === "BREACHED") {
         await tx.slaBreach.create({ data: { id: stableId(`${org}:breach:${s.key}:${type}`), organizationId, timerId: timer.id, breachedAt: new Date(Math.min(NOW, met?.getTime() ?? NOW)) } });
@@ -386,11 +334,13 @@ async function seedOrg(c: Ctx, org: "acme" | "globex"): Promise<number> {
     // goes to the review queue and is never auto-merged (rule 9).
     const target = stableId("acme:item:checkout-outage-mail");
     const chatMsg = stableId("acme:msg:checkout-outage-chat:0");
+    const itemRow = await tx.trackedItem.findFirstOrThrow({ where: { threadId: stableId("acme:thread:checkout-outage-mail") } });
     await tx.correlationCandidate.create({
-      data: { id: stableId("acme:corr:checkout"), organizationId, subjectType: "Message", subjectId: chatMsg, targetItemId: target, score: 0.72,
+      data: { id: stableId("acme:corr:checkout"), organizationId, subjectType: "Message", subjectId: chatMsg, targetItemId: itemRow.id, score: 0.72,
               rationale: { signals: ["same topic: checkout errors", "within 20 minutes", "different channel"], belowAutoMergeThreshold: true } },
     });
     await tx.reviewTask.create({ data: { id: stableId("acme:review:checkout"), organizationId, type: "CORRELATION", refType: "CorrelationCandidate", refId: stableId("acme:corr:checkout") } });
+    void target;
   }
   await recordAudit(tx, { organizationId, actorType: "SYSTEM", action: "fixture.seeded", entityType: "Organization", entityId: organizationId, metadata: { scenarios: count, synthetic: true } });
   return count;
@@ -402,12 +352,22 @@ export async function seedScenarios(ids: {
   userId: (handle: string) => string;
 }): Promise<void> {
   const key = parseFieldKey(process.env["FIELD_ENCRYPTION_KEY"] ?? "");
+  const opts: EngineOptions = { fieldKey: key, now: () => new Date(NOW) }; // fixed clock: fixtures are dated in the past
   for (const org of ["acme", "globex"] as const) {
     const organizationId = ids.orgs[org];
+    // Human steps run as real principals, resolved from the seeded memberships.
+    const handles = [...new Set(SCENARIOS.filter((x) => x.org === org).flatMap((x) => x.steps.filter((st) => st.actor === "USER").map((st) => st.by!)))];
+    const principals = new Map<string, Principal>();
+    for (const h of handles) {
+      const p = await resolvePrincipal(ids.userId(h), organizationId);
+      if (!p) throw new Error(`Seed principal ${h} has no membership in ${org}`);
+      principals.set(h, p);
+    }
     const n = await withTenant({ organizationId }, (tx) =>
       seedOrg({
-        tx, organizationId, key, userId: ids.userId,
+        tx, organizationId, key, opts, userId: ids.userId,
         teamId: (name) => ids.teams[`${org}:${name}`] ?? (() => { throw new Error(`Unknown team ${org}:${name}`); })(),
+        principal: (h) => principals.get(h) ?? (() => { throw new Error(`No principal for ${h}`); })(),
       }, org));
     console.log(n === 0 ? `Scenarios for ${org}: already seeded` : `Scenarios for ${org}: seeded ${n}`);
   }

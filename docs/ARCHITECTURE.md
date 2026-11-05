@@ -52,17 +52,40 @@ States: `RECEIVED, ACKNOWLEDGED, RESPONDED, IN_PROGRESS, RESOLUTION_PROPOSED, RE
 | RECEIVED, ACKNOWLEDGED | RESPONDED | system, confidence ≥ threshold | review if below |
 | RECEIVED, ACKNOWLEDGED, RESPONDED | IN_PROGRESS | system | none |
 | RESPONDED, IN_PROGRESS | RESOLUTION_PROPOSED | system or human | none (proposal only) |
+| RESOLUTION_PROPOSED | IN_PROGRESS | system (customer pushback) or human (rejecting the approval) | none |
 | RESOLUTION_PROPOSED | RESOLUTION_CONFIRMED | **human only** | required |
 | RESOLUTION_CONFIRMED | CLOSED | **human only**, authorized role | required |
 | CLOSED, RESOLUTION_CONFIRMED | REOPENED | human, or system suggestion | auto-reopen only suggests |
 | REOPENED | ACKNOWLEDGED, RESPONDED, IN_PROGRESS | as above | as above |
 
+Added in Sprint 3: `RESOLUTION_PROPOSED -> IN_PROGRESS`, so a rejected or contradicted proposal has a way forward.
+
 Invariants:
-- Transition table is data, unit-tested exhaustively, including all illegal pairs.
+- Transition table is data (`src/modules/lifecycle/transitions.ts`), unit-tested exhaustively over all 64 state pairs, and integration-tested for every pair against every actor type.
 - State change + `LifecycleEvent` + `AuditLog` commit in one transaction.
-- Optimistic concurrency via `version` on `TrackedItem`.
+- Optimistic concurrency via `version` on `TrackedItem`; each `LifecycleEvent` has a per-item `seq` (equal to the version after it) that is the canonical replay order, unique per item, so concurrent writers cannot both win.
 - Each event records actor (user, system, or analyzer), evidence, `AnalysisRun` id, and reason.
-- Metrics derive from events: `ackAt`, `firstSubstantiveResponseAt`, `resolvedAt`, `closedAt`. A reopen starts a new cycle; prior cycles are retained.
+- Metrics derive from events (`deriveMetrics`): `ackAt`, `firstSubstantiveResponseAt`, `resolvedAt` (confirmation, not proposal), `closedAt`. A reopen starts a new cycle: item-level metrics describe the current cycle, prior cycles stay in the event stream. `verifyItemMetrics` recomputes from events and reports drift.
+
+### Engine API (`src/modules/lifecycle`)
+
+Every function takes the caller's tenant transaction. Deterministic problems return a typed outcome and write nothing; only a lost race throws `LifecycleConflictError` (the transaction rolls back; the caller may retry). Authorization failures throw `ForbiddenError`.
+
+| Function | Who | Behavior |
+|---|---|---|
+| `createItem` | system or analyzer | Creates the item at `RECEIVED` with its first event, origin link, owner and audit row. Returns `EXISTS` if the thread already has an open item (rule 9). A low-confidence analyzer creation is tracked but flagged `needsReview` with a review task. |
+| `propose` | system or analyzer | Validates and either applies, queues an `ApprovalRequest`, or queues a `ReviewTask`. Confirm, close and reopen are only ever *suggested* (an approval is queued, never applied). Replay-safe: the same analyzer run applies once; an item already in the target state is a `NOOP`. |
+| `apply` | authorized human | Performs a transition after an RBAC check on the item's team (`item:act`, `item:confirm`, `item:close`, with the org's `approvalMinRole`). Human-only transitions write an `APPROVED` request, resolving a pending one if present. |
+| `decideApproval` | authorized human | Approve performs the transition as that human. Reject records it; rejecting a pending confirmation returns the item to `IN_PROGRESS`. |
+| `assignOwner` | authorized human | Assigns or clears the owner (history in `ItemOwnership`); does not touch state or version. |
+
+Outcomes: `APPLIED`, `APPROVAL_REQUIRED`, `NEEDS_REVIEW`, `NOOP`, `REJECTED` (with a reason such as `ILLEGAL_TRANSITION`, `INVALID_ACTOR`, `OUT_OF_ORDER`, `FUTURE_TIMESTAMP`, `STALE_VERSION`, `THREAD_HAS_OPEN_ITEM`).
+
+Analyzer recommendations are untrusted (rule 6). The engine requires a real `AnalysisRun` of the same organization, a confidence in [0, 1] at or above the threshold (default 0.8, overridable at `Organization.settings.lifecycle.confidenceThreshold`), and at least one evidence quote that is a verbatim substring of the decrypted triggering message. Anything else becomes `NEEDS_REVIEW`: state does not move. `occurredAt` is the event time (a message's `sentAt`), must not precede the previous event or be in the future (5 minute skew), so metrics reflect when things happened, not when they were processed.
+
+### Enforcing rule 1
+
+Only `src/modules/lifecycle` writes `TrackedItem`. Two backstops: an ESLint rule bans `trackedItem` writes and the guard flag name everywhere else (tests are exempt; their fixtures open the guard explicitly), and a database trigger rejects inserts and changes to `state`, the four metric timestamps, `reopenCount` and `version` unless the transaction-local flag `app.lifecycle_writer` is on. The engine opens the flag only around its own writes and closes it again. This catches bugs and stray writes; it is not a security boundary, since code holding the app connection could set the flag in raw SQL.
 
 ## 5. AI design
 

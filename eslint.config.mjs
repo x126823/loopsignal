@@ -46,4 +46,28 @@ export default defineConfig([
       ],
     },
   },
+  // CLAUDE.md rule 1: only src/modules/lifecycle writes TrackedItem. (The database trigger is the runtime backstop;
+  // tests are exempt because their fixtures open the guard explicitly.)
+  {
+    files: ["**/*.{ts,tsx,mts,mjs}"],
+    ignores: ["src/modules/lifecycle/**", "tests/**", "eslint.config.mjs"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)$/][callee.object.property.name='trackedItem']",
+          message: "Only src/modules/lifecycle may write TrackedItem (rule 1). Use the lifecycle engine (createItem, propose, apply).",
+        },
+        {
+          selector: "Literal[value=/lifecycle_writer/]",
+          message: "The lifecycle writer flag belongs to src/modules/lifecycle (rule 1).",
+        },
+        {
+          selector: "TemplateElement[value.raw=/lifecycle_writer/]",
+          message: "The lifecycle writer flag belongs to src/modules/lifecycle (rule 1).",
+        },
+      ],
+    },
+  },
 ]);
