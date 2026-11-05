@@ -11,7 +11,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed drives scenarios through the engine. Sprint 4 (ingestion) in review: adapter interface, synthetic adapter, idempotent RawEvent to Message pipeline, BullMQ queues with retries and dead-letter. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed drives scenarios through the engine. Sprint 4 (ingestion) in review: adapter interface, synthetic adapter, idempotent RawEvent to Message pipeline, BullMQ queues with retries and dead-letter. Sprint 5 (AI foundation) in review: LLMProvider with fake and Claude providers, guard pipeline, prompt-injection fixture suite. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -50,6 +50,8 @@ npm run dev        # http://localhost:3000
 npm run worker     # BullMQ worker: processes ingest-source jobs
 npm run ingest:synthetic   # queue a sync of the seeded synthetic mailbox (worker must be running)
 ```
+
+LLM: `LLM_PROVIDER` defaults to `fake`, which never contacts a model. To try the Claude provider, set `LLM_PROVIDER=claude` and provide credentials the SDK understands (`ANTHROPIC_API_KEY` or `ant auth login`); they are never stored or validated by this repo. Use synthetic data only. An opt-in live smoke test: `LIVE_LLM=1 npx vitest run tests/live`.
 
 Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.
 

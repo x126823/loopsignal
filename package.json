@@ -21,6 +21,7 @@
     "ingest:synthetic": "node --env-file-if-exists=.env --import tsx scripts/enqueue-sync.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
     "bullmq": "^6.7.0",

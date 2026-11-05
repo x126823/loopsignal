@@ -1,19 +1,9 @@
-import { createHash } from "node:crypto";
 import type { TenantTx } from "@/lib/db";
 import { encryptField } from "@/lib/crypto/fields";
+import { canonicalJson, sha256 } from "@/lib/hash";
 import { NormalizationError, type ProviderAdapter, type RawProviderEvent } from "@/modules/integrations";
 
-/** Deterministic JSON (sorted keys) so the payload hash does not depend on key order. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+export { canonicalJson, sha256 };
 
 export type IngestResult =
   | { result: "MESSAGE_CREATED"; messageId: string; rawEventCreated: boolean }

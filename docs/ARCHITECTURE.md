@@ -134,6 +134,24 @@ Guards (applied to every call):
 - Redaction pass before sending content to the provider; input-hash cache; per-org budget cap.
 - Prompts are versioned; every `AnalysisRun` stores model, prompt version, input hash, output.
 
+### 5b. AI foundation (implemented in Sprint 5)
+
+`src/modules/intelligence` holds the provider layer and the guard pipeline. Analyzers (Sprint 6) plug in as an `AnalyzerDefinition` (name, `promptVersion`, instructions, a Zod `resultSchema`); the pipeline does the rest.
+
+**Providers.** `LLMProvider.complete(req)` returns *unvalidated* JSON plus usage (`output`, `refusal` or `truncated`); it is the pipeline, not the provider, that validates. This deliberately differs from the earlier `complete<T>` sketch so that no provider is trusted. `FakeProvider` is deterministic, records every request, and takes a scripted responder, which is how golden sets and the injection suite run with no model. `ClaudeProvider` uses the official SDK on the Messages API with structured outputs (`output_config.format` from the Zod schema) and nothing else: no tools, no prefill, no forced tool choice, no server tools, no sampling parameters, no fallback model. Defaults: `LLM_PROVIDER=fake` (nothing contacts a model unless `claude` is chosen), `LLM_MODEL=claude-opus-5-5`, `LLM_EFFORT=medium`. A refusal is recorded and routed to human review; it is never retried on another model. SDK errors are mapped to retryable or permanent and their text is dropped, since it can echo content.
+
+**Pipeline** (`runAnalyzer`), in order: load and decrypt messages, size limits (oversized input is rejected, never truncated), redaction, input hash, cache, budget, delimiting, provider call, Zod validation with one bounded retry, evidence guard, forced human approval, persist. No database transaction is open across the model call.
+
+- *Redaction* removes private keys, JWTs, provider API keys, bearer tokens, credential assignments, Luhn-valid card numbers and SINs, and SSNs before content leaves; counts are kept, values never. It is a safety net, not a guarantee. Emails and ordinary identifiers are left in.
+- *Delimiting*: messages sit inside `<untrusted_NONCE>` blocks whose tag names carry a per-input nonce (HMAC of the input hash under a server secret), so an author cannot close the block. Content is never placed in the system prompt, which is byte-identical regardless of what messages say.
+- *Evidence*: every quote must be a verbatim substring of the **original** text of a message the analyzer was given, and any action that asserts something must cite at least one. A quote spanning a redaction is rejected.
+- *Approval*: `requiresHumanApproval` is forced true for confirm, close and reopen suggestions and for confidence below the threshold, regardless of the model. The lifecycle engine independently refuses to apply those transitions.
+- *Cache*: keyed on (organization, analyzer, input hash, prompt version); the hash includes provider, model and the redacted messages, so changing any of them misses. Never shared across organizations.
+- *Budget*: a per-organization daily token cap (`LLM_DAILY_TOKEN_BUDGET`, or `Organization.settings.llm.dailyTokenBudget`), summed from `AnalysisRun`. Cached results are still served when it is spent.
+- *Persistence*: every attempt writes an `AnalysisRun`. Failures store only a reason (never the raw model output, which can echo content) under a unique throwaway input hash so they never block a later success, and queue a `SCHEMA_FAILURE` review task.
+
+**What the guards guarantee, and what they do not.** With a model that obeys every hostile instruction, injected text cannot: break out of the delimiters or alter the instructions; make an output with fabricated, foreign or missing evidence count; add fields or actions to the output; skip human approval for a human decision; or cause the engine to confirm, close or reopen anything. They do **not** stop a fooled model from recommending a *routine* step (acknowledged, responded, in progress, proposed) with a real quote from the attacker's own message; the engine will apply that if it is legal and the confidence clears the threshold, attributed to the analyzer run and audited. Analyzers (Sprint 6) must reduce this further, for example by considering only outbound messages as acknowledgments. Known limits: the budget is a soft cap (concurrent calls can overshoot by their own size); concurrent identical analyses may each call the provider before one result wins (the stored result is single); per-organization rate limiting belongs at the queue level (Sprint 6); and the provider's data-retention terms have not been reviewed, which is why only synthetic data is used (rule 7).
+
 ## 6. Multi-tenancy
 
 - `organizationId` on every tenant-owned row.
