@@ -1,8 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { PrismaClient } from "../../generated/prisma/client";
-import { encryptField } from "@/lib/crypto/fields";
+import { encryptField, parseFieldKey } from "@/lib/crypto/fields";
 
-export const testKey = randomBytes(32);
+/**
+ * The key fixtures encrypt with. It is the configured FIELD_ENCRYPTION_KEY when there is one, so data created by tests can also
+ * be read by a running server (browser tests); otherwise a random key, which is fine for tests that pass it explicitly.
+ */
+export const testKey = process.env["FIELD_ENCRYPTION_KEY"] ? parseFieldKey(process.env["FIELD_ENCRYPTION_KEY"]) : randomBytes(32);
 
 /**
  * Delete every row belonging to the given organizations, across all tenant tables.

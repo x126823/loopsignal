@@ -1,5 +1,5 @@
 import type { ItemState } from "../../generated/prisma/enums";
-import type { AcknowledgmentResult, AnalysisOutcome, IntentResult, OwnershipResult, SubstantiveResult } from "@/modules/intelligence";
+import type { AcknowledgmentResult, AnalysisOutcome, IntentResult, OwnershipResult, ProgressResult, ResolutionResult, SubstantiveResult } from "@/modules/intelligence";
 import type { TeamCandidate } from "@/modules/tenancy";
 
 /**
@@ -63,6 +63,44 @@ export function decideReply(
   if (isSub && isAck) return { kind: "CONTRADICTION" };
   if (isSub && (state === "RECEIVED" || state === "ACKNOWLEDGED" || state === "REOPENED")) return { kind: "RESPONDED" };
   if (isAck && (state === "RECEIVED" || state === "REOPENED")) return { kind: "ACKNOWLEDGED" };
+  return { kind: "NONE" };
+}
+
+export type ProgressDecision = { kind: "IN_PROGRESS" } | { kind: "NONE" };
+
+/**
+ * Progress: our own reply reports work underway. Only from RESPONDED: moving to IN_PROGRESS earlier would skip the
+ * acknowledgment and response metrics, which must be recorded from their own events (rule 4).
+ */
+export function decideProgress(state: ItemState, subject: { id: string; direction: Direction }, out: Ok<ProgressResult> | null): ProgressDecision {
+  const ok = out !== null && verifyReply(out, subject) && out.recommendedAction === "TRANSITION_IN_PROGRESS" && out.result.isProgress;
+  return ok && state === "RESPONDED" ? { kind: "IN_PROGRESS" } : { kind: "NONE" };
+}
+
+export type ResolutionDecision =
+  /** Our reply claims a fix: the item becomes RESOLUTION_PROPOSED (a proposal, never a resolution). */
+  | { kind: "PROPOSE_RESOLUTION" }
+  /** The customer says it worked: only a SUGGESTION. The engine queues an approval and a human decides (rule 2). */
+  | { kind: "SUGGEST_CONFIRMATION" }
+  /** The customer says it did not work: the item goes back to IN_PROGRESS. */
+  | { kind: "BACK_TO_IN_PROGRESS" }
+  | { kind: "NONE" };
+
+/**
+ * Resolution (rules 2 and 5: a proposal is not a confirmed resolution). Each signal is accepted only from the right side
+ * and in the right state, with the recommended action matching the signal exactly and the evidence being the message
+ * itself: only OUR message can claim a fix, only the CUSTOMER's message (direction INBOUND) can confirm or reject, and a
+ * confirmation or rejection means something only while a resolution is actually proposed. A claim from the wrong side,
+ * or that disagrees with its own action, is ignored.
+ */
+export function decideResolution(state: ItemState, subject: { id: string; direction: Direction }, out: Ok<ResolutionResult> | null): ResolutionDecision {
+  if (out === null || !citesOnly(out, subject.id)) return { kind: "NONE" };
+  const { signal } = out.result;
+  const ours = subject.direction !== "INBOUND";
+  if (signal === "resolved_by_us" && ours && out.recommendedAction === "TRANSITION_RESOLUTION_PROPOSED" && (state === "RESPONDED" || state === "IN_PROGRESS")) return { kind: "PROPOSE_RESOLUTION" };
+  if (state !== "RESOLUTION_PROPOSED" || ours) return { kind: "NONE" };
+  if (signal === "confirmed_by_customer" && out.recommendedAction === "TRANSITION_RESOLUTION_CONFIRMED") return { kind: "SUGGEST_CONFIRMATION" };
+  if (signal === "rejected_by_customer" && out.recommendedAction === "TRANSITION_IN_PROGRESS") return { kind: "BACK_TO_IN_PROGRESS" };
   return { kind: "NONE" };
 }
 

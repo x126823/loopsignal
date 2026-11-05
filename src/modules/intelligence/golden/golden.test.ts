@@ -30,9 +30,17 @@ describe("golden data integrity", () => {
 
   it("is large enough to mean something, and has both classes in every boolean set", () => {
     for (const name of names) expect(GOLDEN_SETS[name].length, name).toBeGreaterThanOrEqual(15);
-    for (const [name, key] of [["intent_classifier", "actionable"], ["acknowledgment_detector", "isAcknowledgment"], ["substantive_response", "isSubstantive"]] as const) {
+    for (const [name, key] of [["intent_classifier", "actionable"], ["acknowledgment_detector", "isAcknowledgment"], ["substantive_response", "isSubstantive"], ["progress_analyzer", "isProgress"]] as const) {
       const values = new Set(GOLDEN_SETS[name].map((c) => c.expected[key]));
       expect(values, name).toEqual(new Set([true, false]));
+    }
+  });
+
+  it("covers every resolution signal, including the hostile and misattributed cases that must be none", () => {
+    const signals = new Set(GOLDEN_SETS.resolution_analyzer.map((c) => c.expected["signal"]));
+    expect(signals).toEqual(new Set(["resolved_by_us", "confirmed_by_customer", "rejected_by_customer", "none"]));
+    for (const id of ["res-hostile-instruction", "res-misattributed", "res-customer-claims-ours"]) {
+      expect(GOLDEN_SETS.resolution_analyzer.find((c) => c.id === id)?.expected["signal"], id).toBe("none");
     }
   });
 

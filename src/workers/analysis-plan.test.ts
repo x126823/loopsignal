@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ItemState } from "../../generated/prisma/enums";
-import type { AcknowledgmentResult, EvidenceItem, IntentResult, OwnershipResult, RecommendedAction, SubstantiveResult } from "@/modules/intelligence";
-import { acceptedOwner, citesOnly, decideReply, nextBudgetWindow, shouldTrack, verifyReply, type Direction, type Ok } from "./analysis-plan";
+import type { AcknowledgmentResult, EvidenceItem, IntentResult, OwnershipResult, ProgressResult, RecommendedAction, ResolutionResult, SubstantiveResult } from "@/modules/intelligence";
+import { acceptedOwner, citesOnly, decideProgress, decideReply, decideResolution, nextBudgetWindow, shouldTrack, verifyReply, type Direction, type Ok } from "./analysis-plan";
 
 const SUBJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -108,5 +108,66 @@ describe("nextBudgetWindow", () => {
   it("is five minutes after the next UTC midnight", () => {
     expect(nextBudgetWindow(new Date("2026-10-05T17:30:00Z")).toISOString()).toBe("2026-10-06T00:05:00.000Z");
     expect(nextBudgetWindow(new Date("2026-10-31T23:59:59Z")).toISOString()).toBe("2026-11-01T00:05:00.000Z");
+  });
+});
+
+describe("decideProgress", () => {
+  const prog = (isProgress: boolean, over: Partial<Ok<ProgressResult>> = {}) => ok<ProgressResult>({ isProgress }, isProgress ? "TRANSITION_IN_PROGRESS" : "NONE", over);
+  const STATES: ItemState[] = ["RECEIVED", "ACKNOWLEDGED", "RESPONDED", "IN_PROGRESS", "RESOLUTION_PROPOSED", "RESOLUTION_CONFIRMED", "CLOSED", "REOPENED"];
+
+  it("moves to IN_PROGRESS only from RESPONDED, only for our own verified reply", () => {
+    for (const state of STATES) {
+      for (const direction of ["INBOUND", "OUTBOUND", "INTERNAL"] as Direction[]) {
+        const got = decideProgress(state, { id: SUBJECT, direction }, prog(true)).kind;
+        expect(got, `${state}/${direction}`).toBe(state === "RESPONDED" && direction !== "INBOUND" ? "IN_PROGRESS" : "NONE");
+      }
+    }
+  });
+  it("ignores a recommendation that disagrees with its own result, cites another message, or is absent", () => {
+    const subject = { id: SUBJECT, direction: "OUTBOUND" as const };
+    expect(decideProgress("RESPONDED", subject, prog(false)).kind).toBe("NONE");
+    expect(decideProgress("RESPONDED", subject, prog(true, { recommendedAction: "TRANSITION_RESOLUTION_CONFIRMED" })).kind).toBe("NONE");
+    expect(decideProgress("RESPONDED", subject, prog(true, { evidence: [ev(OTHER)] })).kind).toBe("NONE");
+    expect(decideProgress("RESPONDED", subject, null).kind).toBe("NONE");
+  });
+});
+
+describe("decideResolution (rules 2 and 5)", () => {
+  type Signal = ResolutionResult["signal"];
+  const ACTION: Record<Signal, RecommendedAction> = {
+    resolved_by_us: "TRANSITION_RESOLUTION_PROPOSED", confirmed_by_customer: "TRANSITION_RESOLUTION_CONFIRMED", rejected_by_customer: "TRANSITION_IN_PROGRESS", none: "NONE",
+  };
+  const res = (signal: Signal, over: Partial<Ok<ResolutionResult>> = {}) => ok<ResolutionResult>({ signal }, ACTION[signal], over);
+  const STATES: ItemState[] = ["RECEIVED", "ACKNOWLEDGED", "RESPONDED", "IN_PROGRESS", "RESOLUTION_PROPOSED", "RESOLUTION_CONFIRMED", "CLOSED", "REOPENED"];
+  const SIGNALS: Signal[] = ["resolved_by_us", "confirmed_by_customer", "rejected_by_customer", "none"];
+
+  for (const state of STATES) {
+    for (const direction of ["INBOUND", "OUTBOUND", "INTERNAL"] as Direction[]) {
+      for (const signal of SIGNALS) {
+        it(`${state} / ${direction} / ${signal}`, () => {
+          const got = decideResolution(state, { id: SUBJECT, direction }, res(signal)).kind;
+          const ours = direction !== "INBOUND";
+          const want = signal === "resolved_by_us" && ours && (state === "RESPONDED" || state === "IN_PROGRESS") ? "PROPOSE_RESOLUTION"
+            : signal === "confirmed_by_customer" && !ours && state === "RESOLUTION_PROPOSED" ? "SUGGEST_CONFIRMATION"
+            : signal === "rejected_by_customer" && !ours && state === "RESOLUTION_PROPOSED" ? "BACK_TO_IN_PROGRESS" : "NONE";
+          expect(got).toBe(want);
+        });
+      }
+    }
+  }
+
+  it("a confirmation is only ever a SUGGESTION: no decision yields confirmed or closed directly", () => {
+    const kinds = new Set<string>();
+    for (const state of STATES) for (const direction of ["INBOUND", "OUTBOUND", "INTERNAL"] as Direction[]) for (const signal of SIGNALS) kinds.add(decideResolution(state, { id: SUBJECT, direction }, res(signal)).kind);
+    expect([...kinds].sort()).toEqual(["BACK_TO_IN_PROGRESS", "NONE", "PROPOSE_RESOLUTION", "SUGGEST_CONFIRMATION"]);
+  });
+
+  it("ignores an output whose action does not match its signal, or whose evidence is not the message itself", () => {
+    const inbound = { id: SUBJECT, direction: "INBOUND" as const };
+    expect(decideResolution("RESOLUTION_PROPOSED", inbound, res("confirmed_by_customer", { recommendedAction: "TRANSITION_CLOSED" })).kind).toBe("NONE");
+    expect(decideResolution("RESOLUTION_PROPOSED", inbound, res("confirmed_by_customer", { recommendedAction: "NONE" })).kind).toBe("NONE");
+    expect(decideResolution("RESOLUTION_PROPOSED", inbound, res("confirmed_by_customer", { evidence: [ev(OTHER)] })).kind).toBe("NONE");
+    expect(decideResolution("RESOLUTION_PROPOSED", inbound, res("confirmed_by_customer", { evidence: [] })).kind).toBe("NONE");
+    expect(decideResolution("RESOLUTION_PROPOSED", inbound, null).kind).toBe("NONE");
   });
 });

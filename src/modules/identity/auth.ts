@@ -36,6 +36,7 @@ function buildProviders(): Provider[] {
 export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   providers: buildProviders(),
   session: { strategy: "jwt" as const },
+  pages: { signIn: "/login", error: "/login" }, // our own sign-in page (it also shows sign-in errors)
   secret: getEnv().AUTH_SECRET,
   trustHost: getEnv().NODE_ENV !== "production",
   callbacks: {

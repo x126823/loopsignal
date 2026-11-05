@@ -67,6 +67,38 @@
         "support": 17,
         "coverage": 1
       }
+    },
+    "progress_analyzer": {
+      "promptVersion": "1",
+      "total": 16,
+      "answered": 16,
+      "abstained": 0,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "calibration": {
+        "threshold": 0.85,
+        "precision": 1,
+        "support": 16,
+        "coverage": 1
+      }
+    },
+    "resolution_analyzer": {
+      "promptVersion": "1",
+      "total": 19,
+      "answered": 19,
+      "abstained": 0,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "calibration": {
+        "threshold": 0.85,
+        "precision": 1,
+        "support": 19,
+        "coverage": 1
+      }
     }
   }
 }

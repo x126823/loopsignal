@@ -33,6 +33,11 @@ const REQUEST = /\b(please|could you|can you|can someone|i need|we need|need hel
 const ACK = /(we have received|received (this|your|it)|got (it|your)|looking into|look into|we are on it|we'?ll get back|get back to you|acknowledged|will review|reviewing)/i;
 const SUBSTANTIVE = /(fixed|resolved|reset|refund(ed)?|was issued|attached|the (cause|issue|problem) was|root cause|because|rotated|restarted|updated|ship(s|ped)? on|will ship|deployed|workaround|please (send|share|try|confirm)|could you (send|share|confirm)|can you (send|share|confirm)|cannot reproduce|can'?t reproduce|by (monday|tuesday|wednesday|thursday|friday)|on (monday|tuesday|wednesday|thursday|friday)|today|tomorrow|\?)/i;
 
+const PROGRESS = /(working on|investigating|is being investigated|in review|scheduled|escalat(ed|ing)|has started|have started|underway|engineer|identified the cause|in progress|will investigate)/i;
+const RESOLVED_BY_US = /(is now fixed|has been fixed|have fixed|is now resolved|has been resolved|should now work|is now working|let us know if (it|this) works|consider this resolved|fix (is|has been) (deployed|live))/i;
+const CUSTOMER_CONFIRMS = /(works now|that fixed it|it'?s fixed|is fixed|fixed it|you can close|confirmed,? (the|that|it)|all good now|problem is gone|resolved on my side)/i;
+const CUSTOMER_REJECTS = /(still (broken|not working|failing|happening|the same)|didn'?t work|did not work|same error|problem persists|not fixed)/i;
+
 type Env = { result: unknown; confidence: number; evidence: Array<{ messageId: string; quote: string }>; recommendedAction: string; requiresHumanApproval: boolean };
 const env = (result: unknown, confidence: number, evidence: Env["evidence"], recommendedAction: string): Env => ({ result, confidence, evidence, recommendedAction, requiresHumanApproval: false });
 
@@ -81,6 +86,29 @@ function reply(p: Parsed, kind: "ack" | "sub"): Env {
   return no(0.85);
 }
 
+function progress(p: Parsed): Env {
+  const last = p.messages.at(-1);
+  const no = () => env({ isProgress: false }, 0.85, [], "NONE");
+  if (!last || last.direction === "INBOUND") return no();
+  const hit = last.text.match(PROGRESS);
+  if (!hit || RESOLVED_BY_US.test(last.text)) return no();
+  return env({ isProgress: true }, 0.88, [{ messageId: last.id, quote: hit[0] }], "TRANSITION_IN_PROGRESS");
+}
+
+function resolution(p: Parsed): Env {
+  const last = p.messages.at(-1);
+  const none = (c = 0.85) => env({ signal: "none" }, c, [], "NONE");
+  if (!last) return none();
+  const claim = (re: RegExp, signal: string, action: string): Env | null => {
+    const m = last.text.match(re);
+    return m ? env({ signal }, 0.9, [{ messageId: last.id, quote: m[0] }], action) : null;
+  };
+  if (last.direction === "INBOUND") {
+    return claim(CUSTOMER_REJECTS, "rejected_by_customer", "TRANSITION_IN_PROGRESS") ?? claim(CUSTOMER_CONFIRMS, "confirmed_by_customer", "TRANSITION_RESOLUTION_CONFIRMED") ?? none();
+  }
+  return claim(RESOLVED_BY_US, "resolved_by_us", "TRANSITION_RESOLUTION_PROPOSED") ?? none();
+}
+
 export class HeuristicProvider implements LLMProvider {
   readonly name = "fake-heuristic";
   readonly model = "heuristic-1";
@@ -93,6 +121,8 @@ export class HeuristicProvider implements LLMProvider {
       case "ownership_resolver": json = ownership(p); break;
       case "acknowledgment_detector": json = reply(p, "ack"); break;
       case "substantive_response": json = reply(p, "sub"); break;
+      case "progress_analyzer": json = progress(p); break;
+      case "resolution_analyzer": json = resolution(p); break;
       default: return { kind: "output", json: undefined, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: 0, model: this.model }; // unknown analyzer: invalid on purpose
     }
     return { kind: "output", json, tokensIn: tokens(req.system) + tokens(req.user), tokensOut: tokens(JSON.stringify(json)), model: this.model };

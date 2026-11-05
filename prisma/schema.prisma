@@ -2,8 +2,10 @@
 // (see the migration SQL). User is global but protected by its own RLS policies.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  // CommonJS output, so the generated client also loads under Playwright's test runner (which is CommonJS here).
+  moduleFormat = "cjs"
 }
 
 datasource db {
