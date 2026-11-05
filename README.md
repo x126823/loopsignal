@@ -10,7 +10,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Planning phase. No application code yet. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete: scaffold, Docker Compose, lint module boundaries, test skeletons, CI. No domain code yet. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -35,12 +35,18 @@ Next.js · React · TypeScript · Tailwind · shadcn/ui · PostgreSQL · Prisma 
 
 Synthetic data only. No real communications are connected during development.
 
-## Quick start (after Sprint 0)
+## Quick start
 
 ```
 cp .env.example .env
 docker compose up -d
+nvm use            # Node 22 (.nvmrc)
 npm install
-npm run db:migrate && npm run db:seed
-npm run dev
+npm run db:generate
+npm run dev        # http://localhost:3000
+npm run worker     # BullMQ worker (no queues yet)
 ```
+
+Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.
+
+`db:migrate` and `db:seed` become useful once the schema lands in Sprint 1–2.
