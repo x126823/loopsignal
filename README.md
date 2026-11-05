@@ -11,7 +11,7 @@ AI recommends; authorized humans approve important lifecycle decisions. The back
 
 ## Status
 
-Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) in review: all models, append-only tables, hash-chained audit log, field encryption, synthetic scenario seed. See `docs/IMPLEMENTATION_PLAN.md`.
+Sprint 0 (foundations) complete. Sprint 1 (tenancy and auth) complete. Sprint 2 (core schema and audit) complete. Sprint 3 (lifecycle engine) in review: transition table, propose/apply API, approvals, ownership, reopen cycles, derived metrics, rule 1 guard. The seed now drives scenarios through the engine. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Documentation
 
@@ -52,7 +52,7 @@ npm run worker     # BullMQ worker (no queues yet)
 
 Checks: `npm run lint && npm run typecheck && npm test && npm run test:e2e`.
 
-Set `FIELD_ENCRYPTION_KEY` (see `.env.example`; `openssl rand -base64 32`) before seeding, since message bodies are stored encrypted. The seed inserts items directly at their final state as a documented fixture exception until the lifecycle engine lands in Sprint 3.
+Set `FIELD_ENCRYPTION_KEY` (see `.env.example`; `openssl rand -base64 32`) before seeding, since message bodies are stored encrypted. The seed drives its scenarios through the lifecycle engine. It is idempotent, but if you change the schema or scenarios, reset with `docker compose down -v && docker compose up -d && npm run db:deploy && npm run db:seed`.
 
 Dev login: set `AUTH_DEV_LOGIN=true` and sign in as any seeded synthetic email (no password; refused in production). If your Postgres volume predates Sprint 1, run `docker compose down -v` once so the runtime role is created.
 

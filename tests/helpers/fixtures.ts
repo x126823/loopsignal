@@ -22,6 +22,14 @@ export async function purgeOrgs(owner: PrismaClient, orgIds: string[]): Promise<
   });
 }
 
+/** Fixtures may write TrackedItem directly, but must open the lifecycle guard the way the engine does. */
+export async function asLifecycleWriter<T>(owner: PrismaClient, fn: (tx: Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0]) => Promise<T>): Promise<T> {
+  return owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.lifecycle_writer', 'on', true)`;
+    return fn(tx);
+  });
+}
+
 export const syntheticEmail = (id: string) => `u-${id}@synthetic.loopsignal.test`;
 
 export interface OrgFixture {
@@ -58,9 +66,9 @@ export async function createOrgFixture(owner: PrismaClient): Promise<OrgFixture>
       bodyHash: "hash", direction: "INBOUND",
     },
   });
-  const item = await owner.trackedItem.create({
+  const item = await asLifecycleWriter(owner, (tx) => tx.trackedItem.create({
     data: { organizationId, teamId: team.id, originMessageId: message.id, threadId: thread.id, title: "Synthetic request" },
-  });
+  }));
   return {
     organizationId, userId, teamId: team.id, connectionId: connection.id, sourceId: source.id,
     threadId: thread.id, messageId: message.id, itemId: item.id,

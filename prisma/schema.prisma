@@ -360,6 +360,8 @@ model LifecycleEvent {
   id             String      @id @default(uuid(7)) @db.Uuid
   organizationId String      @db.Uuid
   itemId         String      @db.Uuid
+  /// Position in the item's event stream (1, 2, 3...). Canonical replay order; equals TrackedItem.version.
+  seq            Int
   cycle          Int         @default(1)
   fromState      ItemState?
   toState        ItemState
@@ -371,6 +373,7 @@ model LifecycleEvent {
   createdAt      DateTime    @default(now()) @db.Timestamptz(3)
   item           TrackedItem @relation(fields: [organizationId, itemId], references: [organizationId, id])
 
+  @@unique([itemId, seq])
   @@index([organizationId, itemId, createdAt])
 }
 

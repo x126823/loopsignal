@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { decryptField, parseFieldKey } from "@/lib/crypto/fields";
-import { withTenant } from "@/lib/db";
+import { withTenant, type TenantTx } from "@/lib/db";
 import { verifyAuditChain } from "@/modules/audit";
+import { verifyItemMetrics } from "@/modules/lifecycle";
 import { stableId } from "../../prisma/seed-scenarios";
 
 // Requires `npm run db:seed` (CI runs it before tests).
@@ -10,7 +11,8 @@ const ACME = "00000000-0000-4000-8000-000000000001";
 const GLOBEX = "00000000-0000-4000-8000-000000000002";
 const key = () => parseFieldKey(process.env["FIELD_ENCRYPTION_KEY"]!);
 const acme = <T>(fn: Parameters<typeof withTenant<T>>[1]) => withTenant({ organizationId: ACME }, fn);
-const item = (k: string) => stableId(`acme:item:${k}`);
+// Items get engine-generated ids, so scenarios are found through their (deterministic) thread.
+const byKey = (tx: TenantTx, k: string) => tx.trackedItem.findFirstOrThrow({ where: { threadId: stableId(`acme:thread:${k}`) } });
 
 describe("seeded scenarios", () => {
   it("creates items across all lifecycle states in two teams", async () => {
@@ -24,7 +26,8 @@ describe("seeded scenarios", () => {
   it("keeps every item's state consistent with its LifecycleEvents, and the metrics with the events", async () => {
     await acme(async (tx) => {
       for (const it of await tx.trackedItem.findMany()) {
-        const events = await tx.lifecycleEvent.findMany({ where: { itemId: it.id }, orderBy: { createdAt: "asc" } });
+        const events = await tx.lifecycleEvent.findMany({ where: { itemId: it.id }, orderBy: { seq: "asc" } });
+        expect(await verifyItemMetrics(tx, it.id), it.title).toEqual({ consistent: true, differences: [] });
         expect(events.at(-1)!.toState, it.title).toBe(it.state);
         const current = events.filter((e) => e.cycle === Math.max(...events.map((x) => x.cycle)));
         const first = (state: string) => current.find((e) => e.toState === state)?.createdAt.getTime() ?? null;
@@ -39,13 +42,13 @@ describe("seeded scenarios", () => {
 
   it("separates acknowledgment, response, proposal, confirmation and closure (rule 5)", async () => {
     await acme(async (tx) => {
-      const printer = await tx.trackedItem.findUniqueOrThrow({ where: { id: item("printer") } });
+      const printer = await byKey(tx, "printer");
       expect([printer.state, printer.ackAt !== null, printer.firstSubstantiveResponseAt]).toEqual(["ACKNOWLEDGED", true, null]);
-      const proposed = await tx.trackedItem.findUniqueOrThrow({ where: { id: item("password-loop") } });
+      const proposed = await byKey(tx, "password-loop");
       expect([proposed.state, proposed.resolvedAt, proposed.closedAt]).toEqual(["RESOLUTION_PROPOSED", null, null]);
       const pending = await tx.approvalRequest.findMany({ where: { itemId: proposed.id } });
       expect(pending.map((p) => [p.requestedTransition, p.status])).toEqual([["RESOLUTION_CONFIRMED", "PENDING"]]);
-      const closed = await tx.trackedItem.findUniqueOrThrow({ where: { id: item("address-change") } });
+      const closed = await byKey(tx, "address-change");
       expect(closed.resolvedAt).not.toBeNull();
       expect(closed.closedAt!.getTime()).toBeGreaterThan(closed.resolvedAt!.getTime());
     });
@@ -66,7 +69,7 @@ describe("seeded scenarios", () => {
 
   it("tracks a reopened item as cycle 2 with prior history preserved", async () => {
     await acme(async (tx) => {
-      const it = await tx.trackedItem.findUniqueOrThrow({ where: { id: item("dashboard-totals") } });
+      const it = await byKey(tx, "dashboard-totals");
       expect([it.reopenCount, it.closedAt, it.resolvedAt]).toEqual([1, null, null]);
       const events = await tx.lifecycleEvent.findMany({ where: { itemId: it.id } });
       expect(events.some((e) => e.cycle === 1 && e.toState === "CLOSED")).toBe(true);
@@ -99,17 +102,18 @@ describe("seeded scenarios", () => {
       expect(await tx.trackedItem.count({ where: { threadId: stableId("acme:thread:checkout-outage-chat") } })).toBe(0);
       const reviews = await tx.reviewTask.findMany({ where: { status: "OPEN" } });
       expect(reviews.map((r) => r.type).sort()).toEqual(["CORRELATION", "LOW_CONFIDENCE"]);
-      expect((await tx.trackedItem.findUniqueOrThrow({ where: { id: item("ambiguous") } })).needsReview).toBe(true);
+      expect((await byKey(tx, "ambiguous")).needsReview).toBe(true);
     });
   });
 
   it("records SLA breaches for late or missing acknowledgment", async () => {
     await acme(async (tx) => {
-      const timers = await tx.slaTimer.findMany({ where: { itemId: { in: [item("battery"), item("contract-question"), item("printer")] }, type: "ACK" } });
+      const ids = Object.fromEntries(await Promise.all(["battery", "contract-question", "printer"].map(async (k) => [k, (await byKey(tx, k)).id])));
+      const timers = await tx.slaTimer.findMany({ where: { itemId: { in: Object.values(ids) }, type: "ACK" } });
       const byItem = new Map(timers.map((t) => [t.itemId, t.state]));
-      expect(byItem.get(item("battery"))).toBe("BREACHED"); // acked, but late
-      expect(byItem.get(item("contract-question"))).toBe("BREACHED"); // never acked
-      expect(byItem.get(item("printer"))).toBe("MET");
+      expect(byItem.get(ids["battery"]!)).toBe("BREACHED"); // acked, but late
+      expect(byItem.get(ids["contract-question"]!)).toBe("BREACHED"); // never acked
+      expect(byItem.get(ids["printer"]!)).toBe("MET");
       expect(await tx.slaBreach.count()).toBeGreaterThanOrEqual(2);
     });
   });
@@ -147,6 +151,27 @@ describe("seeded scenarios", () => {
     expect(globexItems).toHaveLength(2);
     const acmeIds = new Set((await acme((tx) => tx.trackedItem.findMany())).map((i) => i.id));
     expect(globexItems.some((i) => acmeIds.has(i.id))).toBe(false);
+  });
+
+  it("was driven through the engine: analyzer steps are attributed to their AnalysisRun, every transition is audited", async () => {
+    await acme(async (tx) => {
+      const events = await tx.lifecycleEvent.findMany({ where: { fromState: { not: null } } });
+      expect(events.length).toBeGreaterThan(15);
+      for (const e of events.filter((x) => x.actorType === "ANALYZER")) {
+        expect(e.analysisRunId, `${e.toState}`).not.toBeNull();
+        expect((await tx.analysisRun.findUniqueOrThrow({ where: { id: e.analysisRunId! } })).status).toBe("OK");
+      }
+      expect(events.some((e) => e.actorType === "ANALYZER")).toBe(true);
+      const audited = await tx.auditLog.count({ where: { action: "item.transitioned" } });
+      expect(audited).toBe(events.length);
+    });
+  });
+
+  it("queued the proposed resolution's approval through the engine, not by hand", async () => {
+    await acme(async (tx) => {
+      const it = await byKey(tx, "password-loop");
+      expect(await tx.auditLog.count({ where: { entityId: it.id, action: "item.approval_requested" } })).toBe(1);
+    });
   });
 
   it("is idempotent: running the seed again changes nothing", async () => {
