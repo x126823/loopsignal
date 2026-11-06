@@ -45,9 +45,9 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 - **SlaBreach**: timerId (unique: one breach per timer), breachedAt (the timer's due time), acknowledgedBy
 
 ### Other
-- **Notification**, **NotificationPreference**: recipient, type, payload (no message content beyond ids), channel, readAt
+- **Notification**, **NotificationPreference**: recipient, type (`sla_warning|sla_breach|approval_requested|review_correlation|review_ownership`), payload (validated, ids and enums only), channel (`IN_APP|EMAIL`), readAt, dedupeKey (unique with org, recipient and channel: one notification per event), deliveredAt (always NULL for EMAIL: CHECK, nothing is sent yet). Both tables are personal: when a request carries a user, RLS limits reads and updates to that user's own rows.
 - **AuditLog** (append-only, hash-chained): organizationId, actorType, actorId, action, entityType, entityId, metadata (json), prevHash, hash, createdAt
-- **MetricSnapshot**: organizationId, teamId, period, metrics (json)
+- **MetricSnapshot**: organizationId, teamId, period, metrics (json). Unused: dashboards are computed live from events and timers.
 
 ## Key relationships
 

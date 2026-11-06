@@ -179,6 +179,28 @@ export async function getItemTimers(principal: Principal, itemId: string, deps: 
     .sort((a, b) => a.cycle - b.cycle || (order[a.type] ?? 0) - (order[b.type] ?? 0));
 }
 
+export interface TimerStateRow {
+  itemId: string;
+  cycle: number;
+  type: TimerType;
+  /** State as of now, even if the next scan has not run yet. */
+  state: TimerState;
+}
+
+/** Timer states for a set of items the CALLER has already authorized, as of the clock. Read-only; for aggregate reporting. */
+export async function listTimerStates(principal: Principal, itemIds: string[], deps: SlaDeps): Promise<TimerStateRow[]> {
+  if (itemIds.length === 0) return [];
+  const now = deps.clock.now();
+  const rows = await withTenant({ organizationId: principal.organizationId, userId: principal.userId }, (tx) => tx.slaTimer.findMany({ where: { itemId: { in: itemIds } } }));
+  return rows.map((r) => {
+    const open = r.resolvedAt === null && (r.state === "RUNNING" || r.state === "WARNED" || r.state === "BREACHED");
+    const effective = open ? timerState({ completedAt: null, endedAt: null }, r.dueAt, r.warnAt ?? r.dueAt, now).state : r.state;
+    // Never report an open timer as less advanced than its stored state (a clock that runs behind must not hide a breach).
+    const state = open && regresses(r.state, effective) ? r.state : effective;
+    return { itemId: r.itemId, cycle: r.cycle, type: r.type, state };
+  });
+}
+
 export interface TimerProgress {
   type: TimerType;
   state: TimerState;

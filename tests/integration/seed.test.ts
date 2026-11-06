@@ -4,6 +4,7 @@ import { decryptField, parseFieldKey } from "@/lib/crypto/fields";
 import { withTenant, type TenantTx } from "@/lib/db";
 import { verifyAuditChain } from "@/modules/audit";
 import { verifyItemMetrics } from "@/modules/lifecycle";
+import { PAYLOADS } from "@/modules/notifications";
 import { stableId } from "../../prisma/seed-scenarios";
 
 // Requires `npm run db:seed` (CI runs it before tests).
@@ -143,6 +144,24 @@ describe("seeded scenarios", () => {
       const rows = await tx.slaBreach.findMany({ include: { timer: true } });
       expect(rows.every((b) => b.timer.state === "BREACHED")).toBe(true);
       expect(new Set(rows.map((b) => b.timerId)).size).toBe(rows.length);
+    });
+  });
+
+  it("raises notifications through the real producers: ids only, valid payloads, and the pending question reaches the people who can decide it", async () => {
+    await acme(async (tx) => {
+      const rows = await tx.notification.findMany();
+      expect(rows.length).toBeGreaterThan(0);
+      const types = new Set(rows.map((r) => r.type));
+      expect(types.has("sla_breach")).toBe(true);
+      expect(types.has("review_correlation")).toBe(true);
+      for (const r of rows) {
+        expect(PAYLOADS[r.type as keyof typeof PAYLOADS].safeParse(r.payload).success, r.type).toBe(true); // ids and enums only
+        expect(r.channel).toBe("IN_APP");
+        expect(r.deliveredAt).toBeNull();
+      }
+      expect(JSON.stringify(rows.map((r) => r.payload))).not.toMatch(/checkout|battery|renewal/i); // no message or item text
+      const askedToDecide = rows.filter((r) => r.type === "review_correlation").map((r) => r.recipientUserId);
+      expect(askedToDecide.length).toBeGreaterThan(0);
     });
   });
 

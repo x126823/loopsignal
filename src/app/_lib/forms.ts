@@ -39,6 +39,8 @@ export const reviewForm = z.object({
 
 export const correlationForm = z.object({ candidateId: uuid, from: z.enum(["review", "item"]).default("review"), itemId: z.union([uuid, z.literal("")]).optional() });
 
+export const markReadForm = z.object({ id: z.union([uuid, z.literal("all")]) });
+
 export const orgForm = z.object({ organizationId: uuid });
 
 export const devLoginForm = z.object({ email: z.string().trim().toLowerCase().email().max(320) });

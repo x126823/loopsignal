@@ -40,6 +40,7 @@ export const newItem = (org: Fx, title: string, opts: { state?: "RECEIVED" | "RE
   cli<{ itemId: string; threadId: string }>("new-item", { org, title, ...opts });
 export const newSlaItem = (org: Fx, title: string, opts: { replied?: boolean } = {}) => cli<{ itemId: string; threadId: string }>("new-sla-item", { org, title, ...opts });
 export const newCandidate = (org: Fx) => cli<{ itemId: string; candidateId: string; chatThreadId: string; chatMessageId: string }>("new-candidate", { org });
+export const notify = (org: Fx, itemId: string, type: "sla_breach" | "review_ownership", who: keyof Fx["users"]) => cli<{ inApp: number; email: number }>("notify", { org, itemId, type, who });
 export const humanMove = (org: Fx, itemId: string, to: "RESOLUTION_CONFIRMED" | "CLOSED") => cli("human-move", { org, itemId, to });
 export const queueReview = (org: Fx, type: "OWNERSHIP" | "LOW_CONFIDENCE", itemId: string) => cli("queue-review", { org, type, itemId });
 export const cleanup = (...orgs: Fx[]) => cli("cleanup", { orgs });

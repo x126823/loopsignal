@@ -98,6 +98,17 @@ describe("finding candidates", () => {
     expect(await owner.analysisRun.count({ where: { messageId: chat.messageId, analyzer: "correlation_analyzer", itemId: null } })).toBe(1);
   });
 
+  it("tells the people who can decide, once, and nobody who cannot", async () => {
+    await mailItem();
+    const chat = await chatMessage();
+    await handle(chat.messageId);
+    await handle(chat.messageId); // replay
+    const cand = (await candidatesFor(chat.messageId))[0]!;
+    const told = (u: string) => owner.notification.count({ where: { recipientUserId: u, type: "review_correlation", channel: "IN_APP", dedupeKey: `candidate:${cand.id}` } });
+    expect([await told(f.users.member), await told(f.users.lead), await told(f.users.admin)]).toEqual([1, 1, 1]);
+    expect([await told(f.users.viewer), await told(f.users.auditor), await told(f.users.otherTeamMember)]).toEqual([0, 0, 0]);
+  });
+
   it("is idempotent: replaying the job asks the question once", async () => {
     await mailItem();
     const chat = await chatMessage();
