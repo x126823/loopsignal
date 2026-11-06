@@ -45,8 +45,9 @@ describe("parseEnv", () => {
   });
 
   it("refuses dev login in production", () => {
-    expect(() => parseEnv({ ...valid, NODE_ENV: "production", AUTH_DEV_LOGIN: "true" })).toThrow(/AUTH_DEV_LOGIN/);
-    expect(parseEnv({ ...valid, NODE_ENV: "production", AUTH_DEV_LOGIN: "false" }).NODE_ENV).toBe("production");
+    const prod = { ...valid, NODE_ENV: "production", AUTH_URL: "https://app.example.com" };
+    expect(() => parseEnv({ ...prod, AUTH_DEV_LOGIN: "true" })).toThrow(/AUTH_DEV_LOGIN/);
+    expect(parseEnv({ ...prod, AUTH_DEV_LOGIN: "false" }).NODE_ENV).toBe("production");
   });
 
   describe("Gmail settings", () => {
@@ -104,6 +105,41 @@ describe("parseEnv", () => {
       expect(() => parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "0" })).toThrow(/GOOGLE_CHAT_BACKFILL_DAYS/);
       expect(() => parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "365" })).toThrow(/GOOGLE_CHAT_BACKFILL_DAYS/);
       expect(parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "30" }).GOOGLE_CHAT_BACKFILL_DAYS).toBe(30);
+    });
+  });
+
+  describe("database pool settings", () => {
+    it("default to a pool of 20 and a 10 second wait for a connection", () => {
+      const env = parseEnv(valid);
+      expect([env.DB_POOL_MAX, env.DB_TX_MAX_WAIT_MS, env.MAINTENANCE_JOBS_ENABLED]).toEqual([20, 10_000, "true"]);
+    });
+
+    it("are bounded, so a typo cannot starve the database or fail every request instantly", () => {
+      expect(parseEnv({ ...valid, DB_POOL_MAX: "50", DB_TX_MAX_WAIT_MS: "30000" })).toMatchObject({ DB_POOL_MAX: 50, DB_TX_MAX_WAIT_MS: 30_000 });
+      for (const bad of [{ DB_POOL_MAX: "1" }, { DB_POOL_MAX: "500" }, { DB_POOL_MAX: "x" }, { DB_TX_MAX_WAIT_MS: "10" }, { DB_TX_MAX_WAIT_MS: "999999" }, { MAINTENANCE_JOBS_ENABLED: "off" }]) {
+        expect(() => parseEnv({ ...valid, ...bad }), JSON.stringify(bad)).toThrow(/DB_POOL_MAX|DB_TX_MAX_WAIT_MS|MAINTENANCE_JOBS_ENABLED/);
+      }
+    });
+  });
+
+  describe("AUTH_URL", () => {
+    const prod = { ...valid, NODE_ENV: "production" };
+    it("is optional in development and treated as unset when empty", () => {
+      expect(parseEnv(valid).AUTH_URL).toBeUndefined();
+      expect(parseEnv({ ...valid, AUTH_URL: "" }).AUTH_URL).toBeUndefined();
+    });
+
+    it("is required in production, pinning the host Auth.js trusts", () => {
+      expect(() => parseEnv(prod)).toThrow(/AUTH_URL/);
+      expect(() => parseEnv({ ...prod, AUTH_URL: "" })).toThrow(/AUTH_URL/);
+      expect(parseEnv({ ...prod, AUTH_URL: "https://app.example.com" }).AUTH_URL).toBe("https://app.example.com");
+    });
+
+    it("must be https in production, except for localhost", () => {
+      expect(() => parseEnv({ ...prod, AUTH_URL: "http://app.example.com" })).toThrow(/AUTH_URL/);
+      expect(() => parseEnv({ ...prod, AUTH_URL: "http://localhost.evil.example" })).toThrow(/AUTH_URL/);
+      expect(() => parseEnv({ ...prod, AUTH_URL: "not a url" })).toThrow(/AUTH_URL/);
+      expect(parseEnv({ ...prod, AUTH_URL: "http://localhost:3000" }).AUTH_URL).toBe("http://localhost:3000");
     });
   });
 });

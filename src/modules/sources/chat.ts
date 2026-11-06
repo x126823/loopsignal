@@ -240,3 +240,25 @@ export async function listChatSpaces(principal: Principal, deps: ChatDeps = {}):
     };
   });
 }
+
+/** Key rotation for open and past claim codes: re-encrypt from `from` to `to`. Idempotent; a blob neither key opens is counted as failed and left alone. */
+export async function rekeyClaims(organizationId: string, from: Buffer, to: Buffer): Promise<{ rewritten: number; alreadyCurrent: number; failed: number }> {
+  const out = { rewritten: 0, alreadyCurrent: 0, failed: 0 };
+  await withTenant({ organizationId }, async (tx) => {
+    for (const row of await tx.sourceClaim.findMany()) {
+      try {
+        const plain = decryptField(row.code, from, codeAad(organizationId));
+        await tx.sourceClaim.update({ where: { organizationId_id: { organizationId, id: row.id } }, data: { code: encryptField(plain, to, codeAad(organizationId)) } });
+        out.rewritten++;
+      } catch {
+        try {
+          decryptField(row.code, to, codeAad(organizationId));
+          out.alreadyCurrent++;
+        } catch {
+          out.failed++;
+        }
+      }
+    }
+  });
+  return out;
+}

@@ -135,7 +135,7 @@ export type TenantTx = Omit<ScopedClient, "$connect" | "$disconnect" | "$on" | "
 const globalForDb = globalThis as unknown as { __loopsignalScoped?: ScopedClient };
 
 function getScopedClient(): ScopedClient {
-  globalForDb.__loopsignalScoped ??= createScopedClient(createPrismaClient(getEnv().APP_DATABASE_URL));
+  globalForDb.__loopsignalScoped ??= createScopedClient(createPrismaClient(getEnv().APP_DATABASE_URL, { poolMax: getEnv().DB_POOL_MAX }));
   return globalForDb.__loopsignalScoped;
 }
 
@@ -149,7 +149,7 @@ export async function withTenant<T>(ctx: TenantContext, fn: (tx: TenantTx) => Pr
       set_config('app.login_email', ${parsed.loginEmail ?? ""}, true)`;
     // Await inside the run: Prisma promises are lazy and would otherwise execute outside the context.
     return store.run(parsed, async () => await fn(tx as unknown as TenantTx));
-  }, { timeout: opts.timeoutMs ?? 5_000 });
+  }, { timeout: opts.timeoutMs ?? 5_000, maxWait: getEnv().DB_TX_MAX_WAIT_MS });
 }
 
 /** Exposed for tests that need to prove the extension is the only thing between callers and the DB. */
@@ -182,5 +182,11 @@ export async function findGmailMailboxSources(address: string): Promise<Array<{ 
 /** Organizations with an enabled Google Chat space, for the Chat poll scan. Ids only. */
 export async function listOrganizationsWithChat(): Promise<string[]> {
   const rows = await getScopedClient().$queryRaw<Array<{ id: string }>>`SELECT chat_scan_org_ids() AS id`;
+  return rows.map((r) => r.id);
+}
+
+/** Every organization id, for the maintenance jobs (retention, audit-chain verification). Ids only. */
+export async function listAllOrganizationIds(): Promise<string[]> {
+  const rows = await getScopedClient().$queryRaw<Array<{ id: string }>>`SELECT maintenance_org_ids() AS id`;
   return rows.map((r) => r.id);
 }

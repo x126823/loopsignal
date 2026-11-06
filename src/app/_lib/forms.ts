@@ -60,3 +60,6 @@ export const chatClaimForm = z.object({ space: z.string().trim().min(1).max(300)
 export const claimIdForm = z.object({ claimId: uuid });
 export const removeSpaceForm = z.object({ sourceId: uuid });
 export const linkPersonForm = z.object({ participantId: uuid, userId: z.union([uuid, z.literal("")]).transform((v) => (v === "" ? null : v)) });
+
+/** Numbers arrive as text; the retention module re-validates them (floors, ordering) and is the authority. */
+export const retentionForm = z.object({ rawEventDays: z.coerce.number(), messageDays: z.coerce.number() });

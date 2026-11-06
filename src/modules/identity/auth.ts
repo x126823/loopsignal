@@ -38,7 +38,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   session: { strategy: "jwt" as const },
   pages: { signIn: "/login", error: "/login" }, // our own sign-in page (it also shows sign-in errors)
   secret: getEnv().AUTH_SECRET,
-  trustHost: getEnv().NODE_ENV !== "production",
+  // Development trusts the request host. Production must NOT: left unset, Auth.js trusts the host only when AUTH_URL pins it, and the env
+  // schema refuses to start a production process without one. (Setting this to `false` explicitly would make every production sign-in
+  // fail with UntrustedHost, even with AUTH_URL set, because an explicit value overrides that detection.)
+  ...(getEnv().NODE_ENV !== "production" ? { trustHost: true } : {}),
   callbacks: {
     /** Invite-only: Google sign-in succeeds only for a verified email that already has a User row. */
     async signIn({ account, profile, user }) {

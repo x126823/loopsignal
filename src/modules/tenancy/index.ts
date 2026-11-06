@@ -2,3 +2,4 @@
 export { createOrganization, listTeams, listUserOrganizations } from "./organizations";
 export { addMembership, addTeamMember, changeMembershipRole, createTeam } from "./members";
 export { listOrganizationUsers, listTeamActors, listTeamCandidates, type OrgUser, type TeamCandidate } from "./candidates";
+export { getOrganizationSetting, setOrganizationSetting } from "./settings";

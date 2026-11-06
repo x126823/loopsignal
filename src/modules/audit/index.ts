@@ -1,2 +1,2 @@
 // Public API of the audit module. Other modules import only from here.
-export { recordAudit, verifyAuditChain, assertSafeMetadata, type AuditEntry, type ChainStatus } from "./audit";
+export { latestAuditEntry, recordAudit, verifyAuditChain, assertSafeMetadata, type AuditEntry, type AuditSummary, type ChainStatus } from "./audit";

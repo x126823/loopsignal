@@ -9,6 +9,8 @@ import { randomUUID } from "node:crypto";
 import { createNotifications } from "../src/modules/notifications";
 import { HeuristicProvider } from "../src/modules/intelligence";
 import { QueueHub, QUEUES } from "../src/lib/queue";
+import { runRetention, verifyAllAuditChains } from "../src/modules/retention";
+import { encryptField } from "../src/lib/crypto/fields";
 import { handleIngestSourceJob } from "../src/modules/ingestion";
 import { handleAnalyzeMessage } from "../src/workers/analyze-message";
 import { purgeOrgs, syntheticEmail, testKey } from "../tests/helpers/fixtures";
@@ -127,6 +129,20 @@ const commands: Record<string, (args: never) => Promise<unknown>> = {
       for (const q of [QUEUES.ingestSource, QUEUES.analyzeMessage]) await hub.queue(q).obliterate({ force: true });
       await hub.close();
     }
+  },
+
+  // A message and its raw payload that arrived long ago, then one real retention pass, so the status screen has something to show.
+  async "retention-demo"(a: { org: EngineFixture; ageDays: number }) {
+    const f = a.org;
+    const received = new Date(Date.now() - a.ageDays * 86_400_000);
+    const thread = await owner.thread.create({ data: { organizationId: f.organizationId, provider: "SYNTHETIC", externalThreadId: `t-${randomUUID()}` } });
+    const raw = await owner.rawEvent.create({ data: { organizationId: f.organizationId, provider: "SYNTHETIC", externalId: `e-${randomUUID()}`, payload: encryptField("{}", testKey, `${f.organizationId}:RawEvent.payload`), payloadHash: randomUUID(), receivedAt: received } });
+    await owner.message.create({ data: { organizationId: f.organizationId, monitoredSourceId: f.sourceId, threadId: thread.id, provider: "SYNTHETIC", externalMessageId: `m-${randomUUID()}`, rawEventId: raw.id, sentAt: received, createdAt: received, bodyText: encryptField("An old message.", testKey, `${f.organizationId}:Message.bodyText`), bodyHash: "h", direction: "INBOUND" } });
+    return runRetention(f.organizationId, { fieldKey: testKey });
+  },
+
+  async "audit-verify"() {
+    return verifyAllAuditChains();
   },
 
   async "human-move"(a: { org: EngineFixture; itemId: string; to: "RESOLUTION_CONFIRMED" | "CLOSED" }) {

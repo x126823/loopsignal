@@ -339,6 +339,8 @@ model Message {
   bodyText            Bytes
   bodyHash            String
   direction           MessageDirection
+  /// Set when retention (or an erasure) replaced the body with a tombstone. The message row, its ids and metadata stay.
+  contentPurgedAt     DateTime?         @db.Timestamptz(3)
   createdAt           DateTime          @default(now()) @db.Timestamptz(3)
   monitoredSource     MonitoredSource   @relation(fields: [organizationId, monitoredSourceId], references: [organizationId, id])
   thread              Thread            @relation(fields: [organizationId, threadId], references: [organizationId, id])

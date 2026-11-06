@@ -33,6 +33,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Dependency audit (production dependencies, high severity and above)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Secret scan (files git tracks)
+        run: npm run scan:secrets
+      - name: Postgres client tools (pg_dump and pg_restore, for the restore drill and its tests)
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Create runtime DB role
         run: psql -h localhost -U loopsignal -d loopsignal -v ON_ERROR_STOP=1 -f docker/postgres/init/01-app-role.sql
         env:
@@ -40,6 +46,8 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:deploy
       - run: npm run db:seed
+      - name: Backup and restore drill
+        run: npm run drill:restore
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test

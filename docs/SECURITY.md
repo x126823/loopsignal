@@ -33,8 +33,8 @@
 - Monitored-source allowlist: only explicitly authorized mailboxes, labels and spaces.
 - Visibility: users see only items from sources and teams they are permitted to see; no broadening beyond native access.
 - Data minimization: store only what's required; attachments metadata only; redact obvious secrets and identifiers before LLM calls.
-- Retention: configurable windows for raw payloads and bodies; shorter than lifecycle/audit retention; deletion jobs tested.
-- Subject rights: ability to export and delete a person's data where applicable.
+- Retention: configurable per-organization windows (defaults 30 days for raw payloads, 180 for bodies), enforced by a daily job, never touching content of an open item; deletion tested. See `docs/runbooks/retention.md`.
+- Subject rights: **erasure** of a person's data is built and audited (`ops:erase-person`); **export** is not (a known gap).
 - LLM provider: review data-handling and retention terms; use zero-retention options where available; no training on customer content.
 - Logs, analytics, error trackers must never receive message content.
 
@@ -59,14 +59,16 @@
 **AI quality**
 - Models can misjudge ack vs. substantive, or "resolved" from polite closings. Mitigated by confidence thresholds, human gates, golden sets, and tracking reviewer overrides as a quality signal.
 
-## 5. Security controls checklist (verified in Sprint 13)
-- [ ] RLS enabled and tested on all tenant tables
-- [ ] Append-only enforcement tested
-- [ ] Token encryption and rotation tested (Chat: the app's key is an env secret, covered by a confinement test; encryption, context binding and refresh tested in Sprint 11; key rotation and a real-credential drill are Sprint 13)
-- [ ] Webhook verification tested (Pub/Sub token verification tested against a fake Google in Sprint 11)
-- [ ] Injection fixture suite green
-- [ ] Confirm/close require human: tested
-- [ ] No content in logs: tested
-- [ ] Retention jobs tested
-- [ ] Dependency and secret scans in CI
-- [ ] Incident response and key-rotation runbooks written
+## 5. Security controls checklist (verified in Sprint 13; evidence in `docs/SECURITY_REVIEW.md`)
+Verified on synthetic data and against a fake Google. "Tested" means a test in this repository fails if the control breaks.
+- [x] RLS enabled and tested on all tenant tables (catalog test over every table with `organizationId`, plus direct database-layer tests for the newer tables)
+- [x] Append-only enforcement tested (including the narrow, tested exception for raw-payload retention and key rotation)
+- [x] Token encryption and rotation tested (encryption and context binding for tokens and claim codes; `ops:rotate-key` for every encrypted column)
+- [x] Webhook verification tested (Pub/Sub token verification, against a fake Google)
+- [x] Injection fixture suite green
+- [x] Confirm/close require human: tested
+- [x] No content in logs: tested on the ingestion, Gmail, Chat, retention and analysis paths; there is no global guard beyond the typed `log()` helper, so new code must keep to it
+- [x] Retention jobs tested
+- [x] Dependency and secret scans in CI
+- [x] Incident response and key-rotation runbooks written (`docs/runbooks/`)
+- [ ] Anything about real providers, real data or a real deployment: **not verified**; see the known gaps in `docs/SECURITY_REVIEW.md`

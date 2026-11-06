@@ -18,3 +18,4 @@ export { recommendThreshold, type Calibration, type Sample } from "./calibration
 export { execute, prepare, type CoreMessage, type ExecResult, type Prepared } from "./core";
 export { HeuristicProvider } from "./heuristic-provider";
 export { GOLDEN_SETS, runGolden, toBaseline, type AnalyzerMetrics, type Baseline, type CaseRow, type GoldenReport } from "./golden/harness";
+export { redactEvidenceForMessages, REDACTED_QUOTE } from "./redact";
