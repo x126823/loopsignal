@@ -12,6 +12,7 @@ export const QUEUES = {
   slaScan: "sla-scan",
   slaRisk: "sla-risk",
   correlationFollowUp: "correlation-follow-up",
+  gmailScan: "gmail-scan",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -32,12 +33,17 @@ export type SlaRiskJob = z.infer<typeof slaRiskJob>;
 export const correlationFollowUpJob = z.object({ organizationId: uuid, candidateId: uuid }).strict();
 export type CorrelationFollowUpJob = z.infer<typeof correlationFollowUpJob>;
 
+/** Like the SLA scan, it carries no data: it discovers organizations with Gmail connections itself. */
+export const gmailScanJob = z.object({}).strict();
+export type GmailScanJob = z.infer<typeof gmailScanJob>;
+
 export const JOB_SCHEMAS = {
   [QUEUES.ingestSource]: ingestSourceJob,
   [QUEUES.analyzeMessage]: analyzeMessageJob,
   [QUEUES.slaScan]: slaScanJob,
   [QUEUES.slaRisk]: slaRiskJob,
   [QUEUES.correlationFollowUp]: correlationFollowUpJob,
+  [QUEUES.gmailScan]: gmailScanJob,
 } as const;
 
 /** Deterministic job ids make enqueueing idempotent: BullMQ ignores an add whose id already exists. No ":" allowed. */

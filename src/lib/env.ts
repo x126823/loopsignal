@@ -26,10 +26,39 @@ const schema = z
     AUTH_DEV_LOGIN: z.enum(["true", "false"]).default("false"),
     AUTH_GOOGLE_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     AUTH_GOOGLE_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+
+    /** Gmail integration. OFF by default; nothing contacts Google, and no Gmail route, job or schedule exists, while it is off. */
+    GMAIL_ENABLED: z.enum(["true", "false"]).default("false"),
+    /** The OAuth client of the Google Cloud project. Never logged; required when GMAIL_ENABLED=true. */
+    GOOGLE_OAUTH_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+    GOOGLE_OAUTH_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+    /** Public origin of this app, used to build the OAuth redirect URI (<origin>/api/gmail/callback). */
+    APP_BASE_URL: z.string().url().default("http://localhost:3000"),
+    /** Pub/Sub topic that Gmail publishes mailbox changes to (projects/<p>/topics/<t>). Unset: polling only, no watch. */
+    GMAIL_PUBSUB_TOPIC: z.preprocess(emptyToUndefined, z.string().regex(/^projects\/[^/]+\/topics\/[^/]+$/).optional()),
+    /** What the push endpoint requires of Pub/Sub's signed token: audience, and the service account that signs it. */
+    GMAIL_PUSH_AUDIENCE: z.preprocess(emptyToUndefined, z.string().optional()),
+    GMAIL_PUSH_SERVICE_ACCOUNT: z.preprocess(emptyToUndefined, z.string().email().optional()),
+    /** How far back the first sync (and a resync after a history gap) reads. */
+    GMAIL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /** TESTS ONLY: point every Google endpoint (auth, token, revoke, Gmail API, signing keys) at a fake server. Refused in production. */
+    GOOGLE_TEST_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.AUTH_DEV_LOGIN === "true"), {
     path: ["AUTH_DEV_LOGIN"],
     message: "dev login must be disabled in production",
+  })
+  .refine((e) => !(e.GMAIL_ENABLED === "true" && (!e.GOOGLE_OAUTH_CLIENT_ID || !e.GOOGLE_OAUTH_CLIENT_SECRET)), {
+    path: ["GOOGLE_OAUTH_CLIENT_ID"],
+    message: "Gmail needs GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET",
+  })
+  .refine((e) => !(e.NODE_ENV === "production" && e.GOOGLE_TEST_BASE_URL), {
+    path: ["GOOGLE_TEST_BASE_URL"],
+    message: "the Google test endpoint override is not allowed in production",
+  })
+  .refine((e) => !(e.GMAIL_PUBSUB_TOPIC && (!e.GMAIL_PUSH_AUDIENCE || !e.GMAIL_PUSH_SERVICE_ACCOUNT)), {
+    path: ["GMAIL_PUSH_AUDIENCE"],
+    message: "a Pub/Sub topic needs GMAIL_PUSH_AUDIENCE and GMAIL_PUSH_SERVICE_ACCOUNT, so push requests can be verified",
   });
 
 export type Env = z.infer<typeof schema>;

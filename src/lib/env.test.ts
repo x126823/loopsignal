@@ -48,4 +48,42 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...valid, NODE_ENV: "production", AUTH_DEV_LOGIN: "true" })).toThrow(/AUTH_DEV_LOGIN/);
     expect(parseEnv({ ...valid, NODE_ENV: "production", AUTH_DEV_LOGIN: "false" }).NODE_ENV).toBe("production");
   });
+
+  describe("Gmail settings", () => {
+    const gmail = { GMAIL_ENABLED: "true", GOOGLE_OAUTH_CLIENT_ID: "id", GOOGLE_OAUTH_CLIENT_SECRET: "secret" };
+
+    it("is off by default and needs nothing else", () => {
+      const env = parseEnv(valid);
+      expect([env.GMAIL_ENABLED, env.GMAIL_BACKFILL_DAYS, env.APP_BASE_URL]).toEqual(["false", 7, "http://localhost:3000"]);
+      expect(env.GOOGLE_OAUTH_CLIENT_ID).toBeUndefined();
+    });
+
+    it("needs the OAuth client when enabled, and names the key without its value", () => {
+      expect(parseEnv({ ...valid, ...gmail }).GMAIL_ENABLED).toBe("true");
+      expect(() => parseEnv({ ...valid, GMAIL_ENABLED: "true" })).toThrow(/GOOGLE_OAUTH_CLIENT_ID/);
+      expect(() => parseEnv({ ...valid, GMAIL_ENABLED: "true", GOOGLE_OAUTH_CLIENT_ID: "id" })).toThrow(/GOOGLE_OAUTH_CLIENT_ID/);
+      expect(() => parseEnv({ ...valid, ...gmail, GOOGLE_OAUTH_CLIENT_SECRET: "" })).toThrow(/GOOGLE_OAUTH_CLIENT_ID/);
+      expect(() => parseEnv({ ...valid, GMAIL_ENABLED: "yes" })).toThrow(/GMAIL_ENABLED/);
+    });
+
+    it("treats empty values from a copied .env.example as unset", () => {
+      const env = parseEnv({ ...valid, GOOGLE_OAUTH_CLIENT_ID: "", GMAIL_PUBSUB_TOPIC: "", GMAIL_PUSH_AUDIENCE: "", GMAIL_PUSH_SERVICE_ACCOUNT: "", GOOGLE_TEST_BASE_URL: "" });
+      expect([env.GOOGLE_OAUTH_CLIENT_ID, env.GMAIL_PUBSUB_TOPIC, env.GOOGLE_TEST_BASE_URL]).toEqual([undefined, undefined, undefined]);
+    });
+
+    it("requires verification settings together with a Pub/Sub topic, so push can never run unauthenticated", () => {
+      const topic = "projects/p/topics/t";
+      expect(() => parseEnv({ ...valid, ...gmail, GMAIL_PUBSUB_TOPIC: topic })).toThrow(/GMAIL_PUSH_AUDIENCE/);
+      expect(() => parseEnv({ ...valid, ...gmail, GMAIL_PUBSUB_TOPIC: topic, GMAIL_PUSH_AUDIENCE: "https://a.test/push" })).toThrow(/GMAIL_PUSH_AUDIENCE/);
+      expect(parseEnv({ ...valid, ...gmail, GMAIL_PUBSUB_TOPIC: topic, GMAIL_PUSH_AUDIENCE: "https://a.test/push", GMAIL_PUSH_SERVICE_ACCOUNT: "s@p.iam.gserviceaccount.com" }).GMAIL_PUBSUB_TOPIC).toBe(topic);
+      expect(() => parseEnv({ ...valid, ...gmail, GMAIL_PUBSUB_TOPIC: "not-a-topic" })).toThrow(/GMAIL_PUBSUB_TOPIC/);
+    });
+
+    it("never allows the Google endpoint override in production, and bounds the backfill window", () => {
+      expect(parseEnv({ ...valid, GOOGLE_TEST_BASE_URL: "http://localhost:4010" }).GOOGLE_TEST_BASE_URL).toBe("http://localhost:4010");
+      expect(() => parseEnv({ ...valid, NODE_ENV: "production", GOOGLE_TEST_BASE_URL: "http://localhost:4010" })).toThrow(/GOOGLE_TEST_BASE_URL/);
+      expect(() => parseEnv({ ...valid, GMAIL_BACKFILL_DAYS: "0" })).toThrow(/GMAIL_BACKFILL_DAYS/);
+      expect(() => parseEnv({ ...valid, GMAIL_BACKFILL_DAYS: "365" })).toThrow(/GMAIL_BACKFILL_DAYS/);
+    });
+  });
 });

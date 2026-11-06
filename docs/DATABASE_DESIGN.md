@@ -12,7 +12,8 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 - **TeamMember**: teamId, userId, role
 
 ### Sources
-- **SourceConnection**: organizationId, provider (`GMAIL|GOOGLE_CHAT|SYNTHETIC`), ownerUserId, encryptedCredentialRef, scopes, status
+- **SourceConnection**: organizationId, provider (`GMAIL|GOOGLE_CHAT|SYNTHETIC`), ownerUserId, encryptedCredentialRef (unused: credentials live in `ConnectionCredential`), scopes, status (`ACTIVE|PAUSED|REVOKED|ERROR`)
+- **ConnectionCredential** (Sprint 11): organizationId, connectionId (unique with org, cascade), tokens (`Bytes`, AES-256-GCM of the access and refresh token, AAD = `<org>:ConnectionCredential.tokens:<connection>`), accessTokenExpiresAt, watchExpiresAt. RLS with select, insert, update and delete policies. Only `src/modules/sources` queries it (enforced by a test).
 - **MonitoredSource**: connectionId, kind (`MAILBOX|LABEL|SPACE`), externalId, teamId, enabled
 - **SourceCursor**: monitoredSourceId, cursor (historyId / sync token), updatedAt
 - **WebhookSubscription**: connectionId, externalId, expiresAt, status
@@ -69,6 +70,7 @@ CorrelationCandidate N─1 TrackedItem
 - Encrypted columns (`Message.bodyText`, `RawEvent.payload`) are `Bytes`: `version | iv | tag | ciphertext`, AES-256-GCM with the row's context as AAD (`src/lib/crypto`).
 - Metric timestamps on `TrackedItem` are written only by the lifecycle module, in the same transaction as the event that causes them.
 - Reopen: new cycle number on events; prior timestamps preserved in events; item-level timestamps reflect the current cycle.
+- Cross-tenant reads are limited to narrow `SECURITY DEFINER` functions that return ids only: `sla_scan_org_ids()`, `gmail_scan_org_ids()` (organizations with an active Gmail connection) and `gmail_mailbox_sources(address)` (enabled mailbox sources watching an address, for the Pub/Sub endpoint, which never knows the organization). Everything done afterwards runs under that organization's own context.
 - Encryption: message bodies, raw payloads, and credentials encrypted at the application layer (envelope encryption).
 - RLS: policy `"organizationId" = app_org_id()` (reads `app.org_id`, NULL when unset) on all tenant tables, `FORCE`d; `Membership` also readable by `userId = app_user_id()`; `User` and `Organization` have their own policies (see migration `tenancy_core`). App role is non-superuser, non-owner, no `BYPASSRLS`, with per-table grants.
 

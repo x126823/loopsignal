@@ -39,6 +39,16 @@ export const NOTICES = {
   decision_required: { tone: "warning", text: "A cross-channel question is closed by deciding it: attach it or keep it separate." },
   notifications_read: { tone: "success", text: "Marked as read." },
   preferences_saved: { tone: "success", text: "Your notification settings were saved." },
+  gmail_connected: { tone: "success", text: "Mailbox connected. The first sync is queued." },
+  gmail_reconnected: { tone: "success", text: "Mailbox reconnected. Syncing resumes where it left off." },
+  gmail_disconnected: { tone: "info", text: "Mailbox disconnected. Access was revoked and the stored credentials were deleted. Messages already collected are kept." },
+  gmail_denied: { tone: "warning", text: "Google did not grant access, so nothing was connected." },
+  gmail_state: { tone: "danger", text: "That connection attempt could not be verified or has expired. Please start again." },
+  gmail_scope: { tone: "danger", text: "Google did not grant read access to the mailbox, so nothing was connected." },
+  gmail_no_refresh: { tone: "danger", text: "Google did not issue lasting access. Remove LoopSignal from the Google account's connected apps and try again." },
+  gmail_failed: { tone: "danger", text: "The mailbox could not be connected. Please try again." },
+  gmail_disabled: { tone: "warning", text: "The Gmail integration is turned off." },
+  sync_queued: { tone: "success", text: "Sync queued." },
   conflict: { tone: "warning", text: "Someone else changed this at the same moment. Please try again." },
 } as const satisfies Record<string, { tone: NoticeTone; text: string }>;
 

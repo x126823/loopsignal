@@ -5,7 +5,9 @@ import { closeQueueHub, QUEUES, queueHub } from "@/lib/queue";
 import { handleIngestSourceJob } from "@/modules/ingestion";
 import { createProviderFromEnv } from "@/modules/intelligence";
 import { analyzeProcessor } from "./analyze-message";
+import { gmailEnabled } from "@/modules/sources";
 import { handleCorrelationFollowUp } from "./correlation-follow-up";
+import { handleGmailScan, registerGmailScanSchedule } from "./gmail-scan";
 import { handleSlaRisk } from "./sla-risk";
 import { handleSlaScan, registerSlaScanSchedule } from "./sla-scan";
 
@@ -43,8 +45,17 @@ void registerSlaScanSchedule(hub).catch((e) => log("error", "sla.schedule_failed
 const followUp = hub.worker(QUEUES.correlationFollowUp, async (job) => handleCorrelationFollowUp(job.data, { hub }), { concurrency: 2 });
 followUp.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.correlationFollowUp, jobId: job?.id ?? null, attemptsMade: job?.attemptsMade ?? 0, errorName: err.name }));
 
-const workers = [ingest, analyze, slaScan, slaRisk, followUp];
-log("info", "worker.started", { queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
+// Gmail: the scan worker and its schedule exist only while the integration is enabled (feature flag, off by default).
+const gmailWorkers = [];
+if (gmailEnabled()) {
+  const gmailScan = hub.worker(QUEUES.gmailScan, async () => handleGmailScan({ hub }), { concurrency: 1 });
+  gmailScan.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.gmailScan, jobId: job?.id ?? null, errorName: err.name }));
+  gmailWorkers.push(gmailScan);
+  void registerGmailScanSchedule(hub).catch((e) => log("error", "gmail.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
+}
+
+const workers = [ingest, analyze, slaScan, slaRisk, followUp, ...gmailWorkers];
+log("info", "worker.started", { gmail: gmailEnabled(), queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
 
 let stopping = false;
 async function shutdown(signal: string): Promise<void> {

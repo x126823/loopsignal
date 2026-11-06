@@ -8,6 +8,8 @@ import { createPolicy, reconcileItem } from "../src/modules/sla";
 import { randomUUID } from "node:crypto";
 import { createNotifications } from "../src/modules/notifications";
 import { HeuristicProvider } from "../src/modules/intelligence";
+import { QueueHub, QUEUES } from "../src/lib/queue";
+import { handleIngestSourceJob } from "../src/modules/ingestion";
 import { handleAnalyzeMessage } from "../src/workers/analyze-message";
 import { purgeOrgs, syntheticEmail, testKey } from "../tests/helpers/fixtures";
 import { at, createEngineFixture, createMessage, createThreadWithMessage, engineOpts, type EngineFixture } from "../tests/helpers/engine-fixture";
@@ -102,6 +104,29 @@ const commands: Record<string, (args: never) => Promise<unknown>> = {
   async notify(a: { org: EngineFixture; itemId: string; type: "sla_breach" | "review_ownership"; who: keyof EngineFixture["users"]; key?: string }) {
     const payload = a.type === "sla_breach" ? { itemId: a.itemId, timerId: randomUUID(), timerType: "ACK" as const, cycle: 1 } : { itemId: a.itemId };
     return createNotifications(a.org.organizationId, { type: a.type, recipients: [a.org.users[a.who]], payload: payload as never, dedupeKey: a.key ?? `e2e-${randomUUID()}` });
+  },
+
+  // Run one sync of a connected Gmail mailbox exactly as the worker's ingest job does (against the fake Google), then optionally the
+  // offline analysis of each message it brought in. Uses a private queue namespace so a running dev worker never sees these jobs.
+  async "gmail-sync"(a: { organizationId: string; monitoredSourceId: string; analyze?: boolean }) {
+    const hub = new QueueHub({ redisUrl: process.env["REDIS_URL"]!, prefix: `e2e-${randomUUID().slice(0, 8)}` });
+    try {
+      const summary = await handleIngestSourceJob({ organizationId: a.organizationId, monitoredSourceId: a.monitoredSourceId }, { hub, fieldKey: testKey });
+      const statuses: string[] = [];
+      const reasons: string[] = [];
+      if (a.analyze) {
+        const messages = await owner.message.findMany({ where: { monitoredSourceId: a.monitoredSourceId }, orderBy: { sentAt: "asc" } });
+        for (const m of messages) {
+          const out = await handleAnalyzeMessage({ organizationId: a.organizationId, messageId: m.id }, { provider: new HeuristicProvider(), pipeline: { fieldKey: testKey }, engine: { fieldKey: testKey }, now: () => new Date() });
+          statuses.push(out.status);
+          reasons.push("reason" in out ? String(out.reason) : "");
+        }
+      }
+      return { summary, statuses, reasons };
+    } finally {
+      for (const q of [QUEUES.ingestSource, QUEUES.analyzeMessage]) await hub.queue(q).obliterate({ force: true });
+      await hub.close();
+    }
   },
 
   async "human-move"(a: { org: EngineFixture; itemId: string; to: "RESOLUTION_CONFIRMED" | "CLOSED" }) {

@@ -4,6 +4,7 @@ import { getEnv } from "@/lib/env";
 import { log } from "@/lib/log";
 import { jobIds, QUEUES, type QueueHub } from "@/lib/queue";
 import { getAdapter, type AdapterRegistry } from "@/modules/integrations";
+import { gmailAdapterFor } from "@/modules/sources";
 import { ingestEvent, sha256 } from "./ingest";
 
 export interface SyncDeps {
@@ -23,12 +24,23 @@ export interface SyncSummary {
   events: number;
   messagesCreated: number;
   messagesExisting: number;
+  /** Times the provider said our position was lost and the sync restarted from a bounded window (Gmail history gap). */
+  resyncs: number;
   malformed: number;
   payloadConflicts: number;
   hasMore: boolean;
 }
 
 const TX_TIMEOUT_MS = 30_000;
+
+/** Providers without credentials come from the integrations registry; Gmail is built for its connection from stored credentials. */
+const defaultAdapterFor: AdapterRegistry = (provider, context) => {
+  if (provider === "GMAIL") {
+    if (!context) throw new Error("A Gmail adapter needs its connection");
+    return gmailAdapterFor(context);
+  }
+  return getAdapter(provider);
+};
 
 /**
  * Pull new events for one monitored source and ingest them. Every step is safe to replay:
@@ -43,12 +55,12 @@ const TX_TIMEOUT_MS = 30_000;
  */
 export async function syncSource(input: { organizationId: string; monitoredSourceId: string }, deps: SyncDeps): Promise<SyncSummary> {
   const { organizationId, monitoredSourceId } = input;
-  const adapterFor = deps.adapterFor ?? getAdapter;
+  const adapterFor = deps.adapterFor ?? defaultAdapterFor;
   const pageSize = deps.pageSize ?? 25;
   const maxPages = deps.maxPages ?? 20;
   const now = deps.now ?? (() => new Date());
   const fieldKey = deps.fieldKey ?? parseFieldKey(getEnv().FIELD_ENCRYPTION_KEY);
-  const summary: SyncSummary = { status: "SYNCED", pages: 0, events: 0, messagesCreated: 0, messagesExisting: 0, malformed: 0, payloadConflicts: 0, hasMore: false };
+  const summary: SyncSummary = { status: "SYNCED", pages: 0, events: 0, messagesCreated: 0, messagesExisting: 0, resyncs: 0, malformed: 0, payloadConflicts: 0, hasMore: false };
 
   const source = await withTenant({ organizationId }, (tx) => tx.monitoredSource.findUnique({ where: { id: monitoredSourceId }, include: { connection: true } }));
   const skip = (reason: NonNullable<SyncSummary["reason"]>): SyncSummary => ({ ...summary, status: "SKIPPED", reason });
@@ -56,12 +68,16 @@ export async function syncSource(input: { organizationId: string; monitoredSourc
   if (!source.enabled) return skip("SOURCE_DISABLED");
   if (source.connection.status !== "ACTIVE") return skip("CONNECTION_INACTIVE");
 
-  const adapter = adapterFor(source.connection.provider);
+  const adapter = await adapterFor(source.connection.provider, { organizationId, connectionId: source.connectionId });
   const ref = { kind: source.kind, externalId: source.externalId };
   let cursor = source.cursor;
 
   for (let page = 0; page < maxPages; page++) {
     const fetched = await adapter.fetch(ref, cursor, pageSize);
+    if (fetched.notice === "RESYNC") {
+      summary.resyncs++;
+      log("warn", "ingest.resync", { organizationId, monitoredSourceId });
+    }
 
     const results = await withTenant({ organizationId }, async (tx) => {
       const out = [];
@@ -96,7 +112,7 @@ export async function syncSource(input: { organizationId: string; monitoredSourc
   }
   log("info", "ingest.synced", {
     organizationId, monitoredSourceId, pages: summary.pages, events: summary.events, created: summary.messagesCreated,
-    existing: summary.messagesExisting, malformed: summary.malformed, conflicts: summary.payloadConflicts, hasMore: summary.hasMore,
+    existing: summary.messagesExisting, resyncs: summary.resyncs, malformed: summary.malformed, conflicts: summary.payloadConflicts, hasMore: summary.hasMore,
   });
   return summary;
 }
@@ -105,10 +121,10 @@ export async function syncSource(input: { organizationId: string; monitoredSourc
  * Queue a sync for every enabled source of an organization whose connection is active (optionally only those whose
  * external id starts with `externalIdPrefix`). `key` distinguishes triggers.
  */
-export async function enqueueOrganizationSync(organizationId: string, hub: QueueHub, key: string, opts: { externalIdPrefix?: string } = {}): Promise<string[]> {
+export async function enqueueOrganizationSync(organizationId: string, hub: QueueHub, key: string, opts: { externalIdPrefix?: string; provider?: "GMAIL" | "GOOGLE_CHAT" | "SYNTHETIC" } = {}): Promise<string[]> {
   const sources = await withTenant({ organizationId }, (tx) =>
     tx.monitoredSource.findMany({
-      where: { enabled: true, connection: { status: "ACTIVE" }, ...(opts.externalIdPrefix ? { externalId: { startsWith: opts.externalIdPrefix } } : {}) },
+      where: { enabled: true, connection: { status: "ACTIVE", ...(opts.provider ? { provider: opts.provider } : {}) }, ...(opts.externalIdPrefix ? { externalId: { startsWith: opts.externalIdPrefix } } : {}) },
     }));
   const ids: string[] = [];
   for (const s of sources) {

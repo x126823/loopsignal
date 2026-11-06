@@ -40,7 +40,9 @@
 
 ## 4. Integration risks
 
-**Gmail**
+**Gmail** (implemented in Sprint 11; see `docs/ARCHITECTURE.md` section 4e)
+- Controls in place: one read-only scope; PKCE and signed, expiring, admin-bound `state` plus an HttpOnly nonce cookie; admin-only at every step; tokens encrypted at rest with context-bound AAD, in a table only one module may touch, never logged or audited; credentials deleted and the grant revoked on disconnect; Pub/Sub push accepted only with Google's signed token (audience, service account, expiry); the integration is a feature flag that is off by default; the endpoint override used by tests is loopback-only and refused in production.
+- Still true:
 - Restricted scopes require Google verification and a security assessment for production apps.
 - Pub/Sub `watch` expires after 7 days: renewal job and alerting required.
 - `historyId` gaps force full resync; handle rate limits and quotas with backoff.
@@ -60,8 +62,8 @@
 ## 5. Security controls checklist (verified in Sprint 13)
 - [ ] RLS enabled and tested on all tenant tables
 - [ ] Append-only enforcement tested
-- [ ] Token encryption and rotation tested
-- [ ] Webhook verification tested
+- [ ] Token encryption and rotation tested (encryption, context binding and refresh tested in Sprint 11; key rotation and a real-credential drill are Sprint 13)
+- [ ] Webhook verification tested (Pub/Sub token verification tested against a fake Google in Sprint 11)
 - [ ] Injection fixture suite green
 - [ ] Confirm/close require human: tested
 - [ ] No content in logs: tested

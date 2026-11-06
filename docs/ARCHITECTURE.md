@@ -29,7 +29,8 @@ Webhooks (Pub/Sub, Chat) ──────────────────�
 | notifications | In-app/email notifications, preferences |
 | reporting | Dashboards, metrics, snapshots |
 | audit | Append-only audit log, hash chain |
-| integrations | Gmail and Google Chat adapters (fetch + normalize only) |
+| integrations | Gmail and Google Chat adapters (fetch + normalize only); no database access |
+| sources | Mailbox connections: OAuth consent, encrypted tokens, disconnect, push watch and push handling |
 
 Rules: modules import each other only via `index.ts`; lint boundaries enforce it; no cross-module table access.
 
@@ -101,7 +102,7 @@ BullMQ ingest-source ──► syncSource ──► adapter.fetch (no transactio
                        advance MonitoredSource.cursor (compare-and-set)
 ```
 
-- **Adapters** (`integrations`) fetch and normalize only. Provider payloads are untrusted: `normalize` validates with Zod and throws `NormalizationError` carrying a stable code, never content. Only the synthetic adapter exists; Gmail and Chat come in Sprints 11 and 12.
+- **Adapters** (`integrations`) fetch and normalize only. Provider payloads are untrusted: `normalize` validates with Zod and throws `NormalizationError` carrying a stable code, never content. The synthetic and Gmail adapters exist (Gmail: section 4e); Chat comes in Sprint 12.
 - **Idempotent at every step.** Raw events dedupe on `(org, provider, externalId)`, messages on `(org, provider, externalMessageId)`, threads and participants on their natural keys. Inserts use `ON CONFLICT DO NOTHING` then read back, so concurrent replays never abort a transaction or duplicate a row. A message re-sent under a new event id is stored as evidence but not duplicated; an event id re-sent with different content keeps the original (`PAYLOAD_CONFLICT`).
 - **Poison events don't block the stream.** A malformed event is stored raw, opens one `SCHEMA_FAILURE` review task, and is counted; it is not retried, because retrying cannot fix it.
 - **No stranded messages.** Per page: ingest in one transaction, enqueue analysis, then advance the cursor. A failure anywhere re-fetches the same page next time; ingestion dedupes and enqueueing is idempotent, so the retry repairs the gap. Concurrent syncs of one source are safe: the cursor moves by compare-and-set and the loser stops.
@@ -136,6 +137,22 @@ Pages: sign-in (`/login`), Approvals (what is waiting for a person), Items, an i
 - Inboxes are personal **at the database level**: when a request carries a user, row-level security shows and changes only that user's own notifications and preferences; system contexts (workers) carry no user and keep organization-wide access.
 
 **Known limits.** No chart library: bars and tables only. The dashboard reads at most the 2000 most recently created items per request, then windows them. Notifications are not pushed (the inbox is read on page load; the unread badge refreshes on navigation). There is no digest, snooze or per-team preference. Owner assignment does not notify (not chosen this sprint).
+
+## 4e. Gmail connection (Sprint 11)
+
+**Off by default.** `GMAIL_ENABLED=false` means: no Gmail route does anything (the callback and push endpoint answer 404, connecting is refused), no Gmail adapter can be built, no Gmail scan runs or is even scheduled, and the Connections page says the integration is off. Only a synthetic or **test** mailbox may be connected until the user authorizes real data (rule 7); this release was built and verified against a fake Google, never the real one.
+
+**Who does what.** `integrations` (no database) holds the pieces that talk to Google: a plain-`fetch` client whose every response is validated with Zod (no new dependency), the Gmail adapter, MIME and header parsing, and Pub/Sub token verification. `sources` (database) owns connections, encrypted tokens, the consent flow, disconnect, watch renewal and the push handler. `ingestion` builds a Gmail adapter per connection through `sources` and otherwise runs the same pipeline as any provider; nothing downstream knows the mail came from Gmail.
+
+**Consent** (`/settings/connections`, organization admins only, checked again at every step). Authorization code + PKCE with exactly one scope, `gmail.readonly` (it cannot send, label, archive or delete). `state` is HMAC-signed, expires in 10 minutes and names the admin and organization; a random nonce in it must match an HttpOnly cookie set when the flow began (login-CSRF protection), which also carries the PKCE verifier. A grant without a refresh token or without the read scope is refused and creates nothing. The outcome is shown only as a fixed notice key.
+
+**Credentials.** Access and refresh tokens are AES-256-GCM ciphertext in `ConnectionCredential`, bound by AAD to organization and connection (a copied blob fails to decrypt), read and written only by `sources` (a test enforces that). They never appear in logs, audit rows, job payloads, error messages or any page. The access token is refreshed two minutes before it expires, and once more if Google rejects it early. If Google refuses the credentials for good (revoked, `invalid_grant`), the connection becomes `ERROR`, is audited once, and syncing stops until an admin reconnects (which keeps the same source and position). **Disconnect** stops the watch and revokes the grant at Google (best effort, a failure never blocks it), deletes the credentials, marks the connection `REVOKED`, disables its sources and audits it; mail already collected stays, because it is the record.
+
+**Syncing** is history-based and the `MonitoredSource.cursor` is an opaque Gmail position. The first sync reads the last `GMAIL_BACKFILL_DAYS` days (INBOX and SENT; drafts, spam and trash are skipped), fixing the mailbox's `historyId` **before** it lists, so nothing that arrives meanwhile is missed; afterwards each sync asks Gmail what changed since that position. If Gmail no longer has that history (a gap), the adapter restarts a bounded backfill and flags the page `RESYNC` (counted and logged), and ingestion's dedupe makes re-reading harmless. The stored raw payload is a projection that drops fields that change over time (labels other than "sent", `historyId`), so a message read again after being marked read is byte-identical rather than a conflicting re-send. Attachments are never read, only noted. Direction: sent by the mailbox owner is `OUTBOUND`, from the owner's own domain is `INTERNAL`, anything else `INBOUND`. Rate limits (429, rate-limit 403) and server errors are retried with backoff and `Retry-After`; anything else is not retried and nothing partial is committed (the cursor moves only after the page is stored).
+
+**Polling and push.** A repeating `gmail-scan` job (every 3 minutes, only scheduled while enabled) queues a sync of every active mailbox, keyed by time bucket so repeats collapse, and renews push watches with less than a day left. **Polling alone is sufficient**; push is an accelerator. With `GMAIL_PUBSUB_TOPIC` set, a watch is registered at connect time and renewed by the scan (watches last 7 days), and `POST /api/gmail/push` accepts Pub/Sub notifications. That endpoint is public by necessity, so every request must carry Google's signed token (RS256 against Google's keys; audience, service account and expiry checked) before the body is read; a notification only says "this mailbox changed" and queues a sync, keyed by history position so duplicates collapse. Two organizations that watch the same address are each woken, each under its own context.
+
+**Known limits.** One label scope (INBOX and SENT); label-based source filters and delegated or shared-mailbox semantics are not modelled. A mailbox's own-domain senders are `INTERNAL` and therefore never treated as requests, which may under-track internal requests. No notification is raised when a connection needs attention (the Connections page shows it). Real Google verification of a restricted scope (a security assessment) is a separate step before any production use. Watch renewal failures are logged at error level (alerting is Sprint 13).
 
 ## 5. AI design
 
