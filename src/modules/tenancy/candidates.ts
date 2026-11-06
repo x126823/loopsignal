@@ -24,3 +24,16 @@ export async function listTeamCandidates(organizationId: string, teamId: string)
       .sort((a, b) => a.id.localeCompare(b.id));
   });
 }
+
+/**
+ * User ids who may act on a team's work, for notifications: team members with a role that can act (or only team leads), whose
+ * organization role is not read-only, plus organization administrators. Ids only. Mirrors the rules in `identity.can`.
+ */
+export async function listTeamActors(organizationId: string, teamId: string, opts: { leadsOnly?: boolean } = {}): Promise<string[]> {
+  return withTenant({ organizationId }, async (tx) => {
+    const members = await tx.teamMember.findMany({ where: { teamId, role: { in: opts.leadsOnly ? ["TEAM_LEAD"] : ["MEMBER", "TEAM_LEAD"] } }, select: { userId: true } });
+    const admins = await tx.membership.findMany({ where: { role: "ORG_ADMIN" }, select: { userId: true } });
+    const memberships = await tx.membership.findMany({ where: { userId: { in: members.map((m) => m.userId) }, role: { notIn: ["VIEWER", "AUDITOR"] } }, select: { userId: true } });
+    return [...new Set([...memberships.map((m) => m.userId), ...admins.map((a) => a.userId)])].sort();
+  });
+}

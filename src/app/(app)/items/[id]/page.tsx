@@ -19,6 +19,7 @@ import { getItemTimers } from "@/modules/sla";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { availableTransitions, canDecideApproval, transitionButtonLabel } from "../../../_lib/available-actions";
 import { parseNotice } from "../../../_lib/notices";
+import { buildTimeline } from "../../../_lib/timeline";
 import { currentTimers, RISK_LABEL, RISK_TONE, riskHint, TIMER_LABEL, TIMER_STATE_LABEL, TIMER_STATE_TONE } from "../../../_lib/sla-display";
 import { requireContext } from "../../../_lib/session";
 import { assignOwnerAction, decideApprovalAction, splitCorrelationAction, transitionAction } from "../../actions";
@@ -56,6 +57,15 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
   const linkedThreads = await Promise.all((await listLinkedThreadIds(ctx.org.id, item.id)).map(async (t) => ({ threadId: t, messages: await loadThreadMessages(ctx.org.id, t) })));
   const attached = linkedThreads.length > 0 ? await listCandidates(ctx.principal, { status: "CONFIRMED", itemId: item.id }) : [];
   const timers = currentTimers(allTimers ?? []);
+  const timeline = buildTimeline({
+    messages: [
+      ...messages.map((m) => ({ id: m.id, direction: m.direction, sentAt: m.sentAt, sender: m.senderName ?? m.senderAddress ?? null, otherChannel: false })),
+      ...linkedThreads.flatMap((lt) => lt.messages.map((m) => ({ id: m.id, direction: m.direction, sentAt: m.sentAt, sender: m.senderName ?? m.senderAddress ?? null, otherChannel: true }))),
+    ],
+    events: events.map((e) => ({ seq: e.seq, fromState: e.fromState, toState: e.toState, cycle: e.cycle, createdAt: e.createdAt, actor: describeActor(e), reason: e.reason, quote: e.evidence[0]?.quote ?? null })),
+    // A deadline that was missed (still overdue, or finished late) is a moment in the item's story.
+    missed: (allTimers ?? []).filter((t) => t.state === "BREACHED").map((t) => ({ id: t.id, type: t.type, cycle: t.cycle, dueAt: t.dueAt })),
+  });
   const risk = riskHint(timers, analyses);
   // The recommendations list is about decisions; the risk hint has its own place in the deadlines card.
   const recommendations = analyses.filter((r) => r.analyzer !== "sla_risk_analyzer").slice(0, 12);
@@ -178,19 +188,29 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
 
           <Card>
             <CardHeader>
-              <CardTitle>History</CardTitle>
-              <CardDescription>Every change, who or what made it, and why. Recorded permanently.</CardDescription>
+              <CardTitle>Timeline</CardTitle>
+              <CardDescription>Messages, every change and who made it, and missed deadlines, in order. Recorded permanently.</CardDescription>
             </CardHeader>
             <CardContent>
-              <ol className="flex flex-col gap-3 text-sm">
-                {events.map((e) => (
-                  <li key={e.seq} className="border-l-2 border-border pl-3" data-testid="event">
+              <ol className="flex flex-col gap-3 text-sm" data-testid="timeline">
+                {timeline.map((e) => e.kind === "event" ? (
+                  <li key={e.key} className="border-l-2 border-primary pl-3" data-testid="event">
                     <p>
                       <span className="font-medium">{e.fromState ? `${STATE_LABEL[e.fromState]} → ` : ""}{STATE_LABEL[e.toState]}</span>
                       {e.cycle > 1 && <span className="ml-2 text-xs text-muted-foreground">cycle {e.cycle}</span>}
                     </p>
-                    <p className="text-xs text-muted-foreground">{describeActor(e)} &middot; {formatDateTime(e.createdAt)}{e.reason ? ` — ${e.reason}` : ""}</p>
-                    {e.evidence.length > 0 && <p className="mt-1 text-xs italic">&ldquo;{e.evidence[0]!.quote}&rdquo;</p>}
+                    <p className="text-xs text-muted-foreground">{e.actor} &middot; {formatDateTime(e.at)}{e.reason ? ` — ${e.reason}` : ""}</p>
+                    {e.quote && <p className="mt-1 text-xs italic">&ldquo;{e.quote}&rdquo;</p>}
+                  </li>
+                ) : e.kind === "deadline" ? (
+                  <li key={e.key} className="border-l-2 border-danger pl-3" data-testid="timeline-deadline">
+                    <p className="font-medium">Deadline missed: {TIMER_LABEL[e.timerType]}{e.cycle > 1 ? ` (cycle ${e.cycle})` : ""}</p>
+                    <p className="text-xs text-muted-foreground">{formatDateTime(e.at)}</p>
+                  </li>
+                ) : (
+                  <li key={e.key} className="border-l-2 border-border pl-3 text-muted-foreground" data-testid="timeline-message">
+                    <p>{DIRECTION_LABEL[e.direction]} message{e.sender ? ` from ${e.sender}` : ""}{e.otherChannel ? " (other channel)" : ""}</p>
+                    <p className="text-xs">{formatDateTime(e.at)}</p>
                   </li>
                 ))}
               </ol>

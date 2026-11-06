@@ -121,6 +121,22 @@ Pages: sign-in (`/login`), Approvals (what is waiting for a person), Items, an i
 
 **Two things learned the hard way.** (1) Next.js can load the data layer as more than one module copy (separately bundled routes), so the tenant context lives on `globalThis` like the cached client it serves; a module-local store made sign-in fail intermittently. (2) Prisma's generated client is emitted as CommonJS (`moduleFormat = "cjs"`) so it loads under Playwright's runner.
 
+## 4d. Dashboards and notifications (Sprint 10)
+
+**Dashboards** (`src/modules/reporting`, route `/dashboard`). Computed **live** from lifecycle events and SLA timers, scoped to the items the viewer may see (`item:view`: team members see their teams, administrators and auditors see everything), optionally for one team they may see. A team filter the viewer may not use shows an empty dashboard, indistinguishable from an empty team. Nothing is stored (`MetricSnapshot` stays unused until scale needs snapshots), so there is no second source of truth to drift, and the module writes nothing. `aggregate.ts` is pure and exhaustively unit-tested; definitions:
+- An item is in the window when its **current cycle** began inside it (receipt, or the reopening that started the cycle).
+- The **four metrics stay separate** (rules 4 and 5): acknowledgment, first substantive response, resolution (a person's confirmation, never a proposal) and closure (never a confirmation). Each is a duration from the cycle's start to its own event, shown as achieved count, still-waiting count, median and p90 (nearest rank). An acknowledgment never fills in a response, and a response never fills in an acknowledgment.
+- Deadline attainment is met / (met + missed) over each item's current-cycle timers; running, due-soon and cancelled timers are counted apart. Open items with a missed or due-soon deadline are listed worst first.
+
+**Item timeline.** The item page merges messages (including attached conversations), every lifecycle event with who made it, and missed deadlines into one ordered timeline. It carries no message text (that stays in the conversation card).
+
+**Notifications** (`src/modules/notifications`, route `/notifications`). Raised by workers, never by the lifecycle engine, so the engine stays free of side effects: SLA warning and breach (to the owner, else the team's leads, else anyone who may act), a suggestion waiting for a decision (to people who may act on the item's team), and review work (a cross-channel candidate, an item needing an owner). Each producer is **best-effort and replay-safe**: a failure is logged with ids and swallowed (it must never fail the analysis or scan whose work already succeeded), and every event has a stable `dedupeKey` under a unique index, so a replayed job never notifies anyone twice.
+- A payload is validated and carries **ids and enums only**; the sentence a person reads is built when they open the inbox, from the item title, and only for items they may still view.
+- Channels and preferences: in-app is on and email is off until a person opts in. **Email is recorded, never sent** in this release (the database refuses to mark an email delivered); delivery arrives with real integrations.
+- Inboxes are personal **at the database level**: when a request carries a user, row-level security shows and changes only that user's own notifications and preferences; system contexts (workers) carry no user and keep organization-wide access.
+
+**Known limits.** No chart library: bars and tables only. The dashboard reads at most the 2000 most recently created items per request, then windows them. Notifications are not pushed (the inbox is read on page load; the unread badge refreshes on navigation). There is no digest, snooze or per-team preference. Owner assignment does not notify (not chosen this sprint).
+
 ## 5. AI design
 
 ```ts

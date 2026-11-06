@@ -8,6 +8,7 @@ import {
 } from "@/modules/intelligence";
 import { findBestMatch, findPendingForThread, queueCandidate, type Verdict } from "@/modules/correlation";
 import { resolvePolicyFor } from "@/modules/sla";
+import { notifyApprovalRequested, notifyCorrelationCandidate, notifyOwnershipNeeded } from "./notify";
 import { createItem, findLinkedItem, findThreadItem, propose, queueReviewTask, type EngineOptions, type Outcome } from "@/modules/lifecycle";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { withTenant } from "@/lib/db";
@@ -87,12 +88,16 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
     const asAnalyzer = (name: string, out: Ok<unknown>) => ({ type: "ANALYZER" as const, analyzer: name, analysisRunId: out.analysisRunId });
 
     const subject = { id, direction: ctx.direction };
-    const proposeAs = async (item: { id: string }, to: ItemState, out: Ok<unknown>, analyzer: string, reason?: string) =>
-      withTenant({ organizationId: org }, (tx) =>
+    const proposeAs = async (item: { id: string; teamId: string }, to: ItemState, out: Ok<unknown>, analyzer: string, reason?: string) => {
+      const outcome = await withTenant({ organizationId: org }, (tx) =>
         propose(tx, {
           organizationId: org, itemId: item.id, to, occurredAt: ctx.sentAt, messageId: id, confidence: out.confidence, evidence: out.evidence,
           ...(reason ? { reason } : {}), actor: asAnalyzer(analyzer, out),
         }, d.engine));
+      // A suggestion that needs a person's decision: tell the people who can decide (best-effort, replay-safe).
+      if (outcome.outcome === "APPROVAL_REQUIRED") await notifyApprovalRequested({ organizationId: org, itemId: item.id, teamId: item.teamId, approvalRequestId: outcome.approvalRequestId, transition: to });
+      return outcome;
+    };
 
     // A reply from our side on an open item. One message can advance the item several steps (for example a first reply that
     // answers AND says it is fixed), so each stage re-reads the item and the next stage runs on its new state.
@@ -185,6 +190,7 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
           reason: "New actionable message after closure", actor: asAnalyzer(intentClassifier.name, intent),
         }, d.engine));
       await attachRunsToItem(org, [intent.analysisRunId], existing.id);
+      if (outcome.outcome === "APPROVAL_REQUIRED") await notifyApprovalRequested({ organizationId: org, itemId: existing.id, teamId: existing.teamId, approvalRequestId: outcome.approvalRequestId, transition: "REOPENED" });
       return outcome.outcome === "APPROVAL_REQUIRED" ? { status: "REOPEN_SUGGESTED", itemId: existing.id } : fromEngine(outcome, existing.id, "REOPENED");
     }
 
@@ -201,6 +207,7 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
         if (verdict?.sameMatter !== "no") {
           const queued = await queueCandidate(org, { subjectMessageId: id, match, ...(verdict ? { verdict } : {}) });
           log("info", "analyze.correlation_queued", { organizationId: org, messageId: id, candidateId: queued.candidateId, created: queued.created });
+          if (queued.created) await notifyCorrelationCandidate({ organizationId: org, candidateId: queued.candidateId, targetItemId: match.targetItemId });
           return { status: "CORRELATION_PENDING", candidateId: queued.candidateId };
         }
       }
@@ -235,7 +242,10 @@ export async function handleAnalyzeMessage(data: unknown, deps: AnalyzeDeps): Pr
     if (created.outcome === "REJECTED") return { status: "NEEDS_REVIEW", reason: created.reason };
 
     await attachRunsToItem(org, [intent.analysisRunId, ...(ownerRun ? [ownerRun] : [])], created.itemId);
-    if (!ownerUserId) await queueReviewTask(org, { type: "OWNERSHIP", refType: "TrackedItem", refId: created.itemId });
+    if (!ownerUserId) {
+      const task = await queueReviewTask(org, { type: "OWNERSHIP", refType: "TrackedItem", refId: created.itemId });
+      if (task.created) await notifyOwnershipNeeded({ organizationId: org, itemId: created.itemId, teamId });
+    }
 
     // Jobs for one thread can run in any order. A reply of ours whose job ran BEFORE the item existed was skipped, so now
     // that the item exists, evaluate the thread's later replies in order. Replays are idempotent, so a reply that also has

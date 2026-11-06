@@ -37,6 +37,8 @@ export const NOTICES = {
   follow_up_failed: { tone: "warning", text: "Your decision was saved, but the follow-up could not be queued yet. Use \"Retry follow-up\" on the review page." },
   follow_up_retried: { tone: "success", text: "Follow-up queued." },
   decision_required: { tone: "warning", text: "A cross-channel question is closed by deciding it: attach it or keep it separate." },
+  notifications_read: { tone: "success", text: "Marked as read." },
+  preferences_saved: { tone: "success", text: "Your notification settings were saved." },
   conflict: { tone: "warning", text: "Someone else changed this at the same moment. Please try again." },
 } as const satisfies Record<string, { tone: NoticeTone; text: string }>;
 

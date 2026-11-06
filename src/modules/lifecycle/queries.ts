@@ -246,6 +246,7 @@ export const canResolveReviewTasks = (principal: Principal): boolean => REVIEW_R
 export interface ItemForSla {
   id: string;
   teamId: string;
+  ownerUserId: string | null;
   priority: "LOW" | "NORMAL" | "HIGH" | "URGENT";
   slaPolicyId: string | null;
   originMessageId: string;
@@ -259,7 +260,7 @@ export async function loadItemForSla(organizationId: string, itemId: string): Pr
     const item = await tx.trackedItem.findUnique({ where: { id: itemId } });
     if (!item) return null;
     const events = await tx.lifecycleEvent.findMany({ where: { itemId }, orderBy: { seq: "asc" }, select: { seq: true, cycle: true, toState: true, createdAt: true } });
-    return { id: item.id, teamId: item.teamId, priority: item.priority, slaPolicyId: item.slaPolicyId, originMessageId: item.originMessageId, state: item.state, events };
+    return { id: item.id, teamId: item.teamId, ownerUserId: item.ownerUserId, priority: item.priority, slaPolicyId: item.slaPolicyId, originMessageId: item.originMessageId, state: item.state, events };
   });
 }
 
@@ -269,4 +270,50 @@ export async function listOpenItemIds(organizationId: string, limit = 5_000): Pr
     const rows = await tx.trackedItem.findMany({ where: { state: { not: "CLOSED" } }, select: { id: true }, orderBy: { createdAt: "asc" }, take: limit });
     return rows.map((r) => r.id);
   });
+}
+
+/** Titles and teams of the items this principal may view, from a list of ids. Anything not visible is simply absent. Read-only. */
+export async function listItemTitles(principal: Principal, itemIds: string[]): Promise<Map<string, { title: string; teamId: string }>> {
+  if (itemIds.length === 0) return new Map();
+  return withTenant(ctxOf(principal), async (tx) => {
+    const items = await tx.trackedItem.findMany({ where: { id: { in: [...new Set(itemIds)] } }, select: { id: true, title: true, teamId: true } });
+    return new Map(items.filter((i) => canView(principal, i.teamId)).map((i) => [i.id, { title: i.title, teamId: i.teamId }]));
+  });
+}
+
+export interface ReportingItem {
+  id: string;
+  teamId: string;
+  title: string;
+  priority: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  state: ItemState;
+  events: Array<{ seq: number; cycle: number; toState: ItemState; createdAt: Date }>;
+}
+
+/**
+ * The items a principal may view whose current cycle started in [from, to), with their ordered events, for aggregate reporting.
+ * Optionally one team. Bounded. Read-only: reporting derives everything from events and never edits a timestamp.
+ */
+export async function listItemsForReporting(principal: Principal, opts: { from: Date; to: Date; teamId?: string; limit?: number }): Promise<ReportingItem[]> {
+  return withTenant(ctxOf(principal), async (tx) => {
+    const items = await tx.trackedItem.findMany({ where: { ...(opts.teamId ? { teamId: opts.teamId } : {}) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: opts.limit ?? 2000 });
+    const visible = items.filter((i) => canView(principal, i.teamId));
+    const events = await tx.lifecycleEvent.findMany({ where: { itemId: { in: visible.map((i) => i.id) } }, orderBy: [{ itemId: "asc" }, { seq: "asc" }], select: { itemId: true, seq: true, cycle: true, toState: true, createdAt: true } });
+    const byItem = new Map<string, ReportingItem["events"]>();
+    for (const e of events) (byItem.get(e.itemId) ?? byItem.set(e.itemId, []).get(e.itemId)!).push({ seq: e.seq, cycle: e.cycle, toState: e.toState, createdAt: e.createdAt });
+    return visible
+      .map((i): ReportingItem => ({ id: i.id, teamId: i.teamId, title: i.title, priority: i.priority, state: i.state, events: byItem.get(i.id) ?? [] }))
+      .filter((i) => {
+        const start = i.events.length ? cycleStartOf(i.events) : null;
+        return start !== null && start >= opts.from && start < opts.to;
+      });
+  });
+}
+
+/** When the item's current cycle began: its first event, or the reopening that started the cycle. */
+export function cycleStartOf(events: ReadonlyArray<{ seq: number; cycle: number; createdAt: Date }>): Date | null {
+  if (events.length === 0) return null;
+  const current = Math.max(...events.map((e) => e.cycle));
+  const first = events.filter((e) => e.cycle === current).sort((a, b) => a.seq - b.seq)[0];
+  return first?.createdAt ?? null;
 }

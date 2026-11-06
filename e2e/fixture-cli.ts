@@ -5,6 +5,8 @@ import { createPrismaClient, withTenant } from "../src/lib/db";
 import { ManualClock } from "../src/lib/clock";
 import { apply, createItem, propose, queueReviewTask } from "../src/modules/lifecycle";
 import { createPolicy, reconcileItem } from "../src/modules/sla";
+import { randomUUID } from "node:crypto";
+import { createNotifications } from "../src/modules/notifications";
 import { HeuristicProvider } from "../src/modules/intelligence";
 import { handleAnalyzeMessage } from "../src/workers/analyze-message";
 import { purgeOrgs, syntheticEmail, testKey } from "../tests/helpers/fixtures";
@@ -94,6 +96,12 @@ const commands: Record<string, (args: never) => Promise<unknown>> = {
     const out = await run(chat.id);
     if (out.status !== "CORRELATION_PENDING") throw new Error(`chat: ${JSON.stringify(out)}`);
     return { itemId: created.itemId, candidateId: out.candidateId, chatThreadId: chatThread.id, chatMessageId: chat.id };
+  },
+
+  // Raise a notification through the real module (the same call the workers make), for one of the organization's people.
+  async notify(a: { org: EngineFixture; itemId: string; type: "sla_breach" | "review_ownership"; who: keyof EngineFixture["users"]; key?: string }) {
+    const payload = a.type === "sla_breach" ? { itemId: a.itemId, timerId: randomUUID(), timerType: "ACK" as const, cycle: 1 } : { itemId: a.itemId };
+    return createNotifications(a.org.organizationId, { type: a.type, recipients: [a.org.users[a.who]], payload: payload as never, dedupeKey: a.key ?? `e2e-${randomUUID()}` });
   },
 
   async "human-move"(a: { org: EngineFixture; itemId: string; to: "RESOLUTION_CONFIRMED" | "CLOSED" }) {

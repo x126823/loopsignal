@@ -20,6 +20,7 @@ import { scorePair, SHOW_THRESHOLD } from "../src/modules/correlation";
 import { resolvePrincipal, type Principal } from "../src/modules/identity";
 import { apply, createItem, propose, type EngineOptions } from "../src/modules/lifecycle";
 import { scanOrganization } from "../src/modules/sla";
+import { notifyCorrelationCandidate, notifySlaTimers } from "../src/workers/notify";
 import type { ItemState, Priority } from "../generated/prisma/enums";
 
 const BASE = Date.parse("2026-10-05T09:00:00Z"); // fixed so reruns and tests are deterministic
@@ -391,6 +392,12 @@ export async function seedScenarios(ids: {
     if (n > 0) {
       const scan = await scanOrganization(organizationId, { clock: new ManualClock(new Date(NOW)) });
       if (scan.failures > 0) throw new Error(`SLA scan failed for ${scan.failures} seeded item(s) in ${org}`);
+      // The same path the worker uses: people hear about missed and due-soon deadlines, and about the pending cross-channel question.
+      await notifySlaTimers(scan);
+      if (org === "acme") {
+        const target = await withTenant({ organizationId }, (tx) => tx.trackedItem.findFirstOrThrow({ where: { threadId: stableId("acme:thread:checkout-outage-mail") } }));
+        await notifyCorrelationCandidate({ organizationId, candidateId: stableId("acme:corr:checkout"), targetItemId: target.id });
+      }
     }
     console.log(n === 0 ? `Scenarios for ${org}: already seeded` : `Scenarios for ${org}: seeded ${n}`);
     await ensureIngestSource(org, organizationId, ids.teams[org === "acme" ? "acme:Support" : "globex:Operations"]!);

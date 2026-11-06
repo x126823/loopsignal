@@ -5,6 +5,7 @@ import { systemClock, type Clock } from "@/lib/clock";
 import { log } from "@/lib/log";
 import { jobIds, QUEUES, type QueueHub } from "@/lib/queue";
 import { scanAll, type ScanAllResult } from "@/modules/sla";
+import { notifySlaTimers } from "./notify";
 
 export const SLA_SCAN_SCHEDULE_ID = "sla-scan-schedule";
 export const SLA_SCAN_EVERY_MS = 60_000;
@@ -16,6 +17,7 @@ export async function registerSlaScanSchedule(hub: QueueHub, everyMs: number = S
 
 export async function handleSlaScan(deps: { hub: QueueHub; clock?: Clock }): Promise<ScanAllResult & { riskJobs: number }> {
   const result = await scanAll({ clock: deps.clock ?? systemClock });
+  await notifySlaTimers(result); // people hear about newly due-soon and missed deadlines; replays notify nobody twice
   let riskJobs = 0;
   for (const t of result.warned) {
     try {

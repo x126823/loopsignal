@@ -23,6 +23,8 @@
 | **Secrets exposure** | Env validated; `.env` git-ignored; secret scanning in CI |
 | **Cost abuse (LLM)** | Per-org budget cap, input-hash cache, rate limits, size limits on content |
 | **Cross-tenant scan** (SLA scanner must find organizations without a tenant context) | One narrow `SECURITY DEFINER` function returns organization ids only (fixed `search_path`, revoked from `PUBLIC`, granted to the app role); all further access is tenant-scoped; tested that the app role cannot read policies directly. The migration role must bypass RLS |
+| **Notification leakage** (one person reading another's inbox, or content in a notification) | Payloads are validated ids and enums only; text is built at read time from item titles and only for items the reader may view; RLS confines a user context to its own notification and preference rows; email is recorded but never sent in this release |
+| **Dashboard over-disclosure** | Aggregates are computed only over items the viewer may view; a team filter the viewer may not use is indistinguishable from an empty team |
 | **Job replay / duplicates** | Idempotent handlers keyed on external IDs; unique constraints |
 | **Dependency / supply chain** | Lockfile, audit in CI, minimal dependencies, pinned versions |
 

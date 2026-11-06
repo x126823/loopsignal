@@ -8,8 +8,9 @@ import { jobIds, QUEUES, queueHub } from "@/lib/queue";
 import { confirmCandidate, listAwaitingFollowUp, rejectCandidate, splitCandidate, type DecisionOutcome as CorrelationOutcome } from "@/modules/correlation";
 import { ForbiddenError } from "@/modules/identity";
 import { apply, assignOwner, decideApproval, LifecycleConflictError, resolveReviewTask } from "@/modules/lifecycle";
+import { CHANNELS, markRead, NOTIFICATION_TYPES, setPreference } from "@/modules/notifications";
 import { listUserOrganizations } from "@/modules/tenancy";
-import { approvalForm, correlationForm, formObject, orgForm, ownerForm, reviewForm, transitionForm } from "../_lib/forms";
+import { approvalForm, correlationForm, formObject, markReadForm, orgForm, ownerForm, reviewForm, transitionForm } from "../_lib/forms";
 import { noticeForCorrelation, noticeForDecision, noticeForOutcome, noticeForOwner, noticeForReview, type NoticeKey } from "../_lib/notices";
 import { ORG_COOKIE, requireContext } from "../_lib/session";
 
@@ -140,5 +141,29 @@ export async function retryFollowUpAction(formData: FormData): Promise<void> {
     const awaiting = await listAwaitingFollowUp(ctx.principal); // only people who may decide, and only decisions that are still waiting
     if (!awaiting.some((a) => a.candidateId === parsed.data.candidateId)) return "not_found";
     return (await queueFollowUp(ctx.org.id, parsed.data.candidateId)) ? "follow_up_retried" : "follow_up_failed";
+  });
+}
+
+/** Mark one of the person's own notifications read, or all of them. Only their own rows can change. */
+export async function markNotificationReadAction(formData: FormData): Promise<void> {
+  const ctx = await requireContext();
+  const parsed = markReadForm.safeParse(formObject(formData));
+  if (!parsed.success) redirect("/notifications?notice=invalid");
+  await finish("/notifications", async () => {
+    await markRead(ctx.principal, parsed.data.id === "all" ? { all: true } : { ids: [parsed.data.id] });
+    return "notifications_read";
+  });
+}
+
+/**
+ * Save the person's notification settings. The form is a grid of checkboxes: a box that is present means on, absent means off, and
+ * only known types and channels are read, so extra or forged fields change nothing.
+ */
+export async function savePreferencesAction(formData: FormData): Promise<void> {
+  const ctx = await requireContext();
+  const fields = formObject(formData);
+  await finish("/notifications", async () => {
+    for (const type of NOTIFICATION_TYPES) for (const channel of CHANNELS) await setPreference(ctx.principal, { type, channel, enabled: fields[`pref:${type}:${channel}`] === "on" });
+    return "preferences_saved";
   });
 }

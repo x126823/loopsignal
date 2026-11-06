@@ -559,9 +559,14 @@ model Notification {
   /// Ids and counts only; never message content.
   payload         Json
   channel         NotificationChannel @default(IN_APP)
+  /// One notification per (recipient, channel, event): a replayed job cannot notify twice.
+  dedupeKey       String?
   readAt          DateTime?           @db.Timestamptz(3)
+  /// EMAIL rows are recorded for a future delivery step and stay NULL: nothing is sent yet.
+  deliveredAt     DateTime?           @db.Timestamptz(3)
   createdAt       DateTime            @default(now()) @db.Timestamptz(3)
 
+  @@unique([organizationId, recipientUserId, channel, dedupeKey])
   @@index([organizationId, recipientUserId, readAt])
 }
 
