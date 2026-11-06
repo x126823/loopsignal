@@ -29,6 +29,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Link href="/items" className="hover:underline">Items</Link>
             <Link href="/review" className="hover:underline">Review queue</Link>
             {ctx.org.role === "ORG_ADMIN" && <Link href="/settings/connections" className="hover:underline" data-testid="nav-connections">Connections</Link>}
+            {ctx.org.role === "ORG_ADMIN" && <Link href="/settings/retention" className="hover:underline" data-testid="nav-retention">Retention</Link>}
             <Link href="/notifications" className="hover:underline" data-testid="nav-notifications">
               Notifications{unread > 0 && <span className="ml-1.5 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground" aria-label={`${unread} unread`} data-testid="unread-count">{unread}</span>}
             </Link>

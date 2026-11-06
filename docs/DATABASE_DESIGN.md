@@ -85,4 +85,9 @@ CorrelationCandidate N─1 TrackedItem
 
 ## Retention
 
-Configurable per org: raw payload and message body retention windows; lifecycle events and audit log retained longer, containing ids and metadata but not message content.
+Per organization (`Organization.settings.retention`, administrators only): raw payload window (default 30 days, minimum 7) and message body window (default 180, minimum 90; a raw payload may not outlive the body it copies). Enforced daily; never touches content of an item that is still open; lifecycle events and the audit log hold ids and metadata, not message text, and are kept. Details and the exact rules: `docs/runbooks/retention.md`.
+
+- `Message.contentPurgedAt`: set when the body was replaced by a tombstone (retention or erasure). The row, its ids and its metadata stay.
+- `RawEvent` rows are deleted by retention, through `retention_purge_raw_events` and `retention_purge_raw_events_for_messages`; `Message.rawEventId` is cleared first. `retention_rekey_raw_event` replaces only the encrypted payload (key rotation). These three functions are owned by the `NOLOGIN` role `loopsignal_maint`, which is the only role the `RawEvent` guard trigger lets delete or re-encrypt; the guard rejects every other change, and TRUNCATE.
+- `retention_expired_message_ids(org, cutoff, max)` is the rule for which messages are due (invoker rights, so row-level security scopes it).
+- `maintenance_org_ids()` lists every organization for the daily jobs (ids only).

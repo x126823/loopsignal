@@ -62,3 +62,11 @@ export async function verifyAuditChain(tx: TenantTx, organizationId: string): Pr
   const bad = rows[0]?.bad ?? null;
   return bad === null ? { intact: true } : { intact: false, firstBadSeq: Number(bad) };
 }
+
+export interface AuditSummary { at: Date; metadata: Record<string, unknown> }
+
+/** The most recent audit entry with this action, for status screens. Read-only. The transaction must carry the organization. */
+export async function latestAuditEntry(tx: TenantTx, action: string): Promise<AuditSummary | null> {
+  const row = await tx.auditLog.findFirst({ where: { action }, orderBy: { seq: "desc" }, select: { createdAt: true, metadata: true } });
+  return row ? { at: row.createdAt, metadata: (row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {}) as Record<string, unknown> } : null;
+}

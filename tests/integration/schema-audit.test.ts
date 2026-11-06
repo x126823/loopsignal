@@ -36,7 +36,14 @@ describe("catalog: every tenant table is protected", () => {
     for (const r of rows) {
       expect({ table: r.t, rls: r.rls, forced: r.forced }).toEqual({ table: r.t, rls: true, forced: true });
       expect(r.cmds, r.t).toEqual(expect.arrayContaining(["SELECT", "INSERT"]));
-      if (APPEND_ONLY.includes(r.t)) expect(r.cmds, r.t).not.toEqual(expect.arrayContaining(["UPDATE"]));
+      // No policy lets the app role change an append-only table. The single exception is RawEvent's maintenance role (retention and key
+      // rotation), whose policies are bound to that role alone and which only the guard trigger's narrow conditions let through.
+      if (APPEND_ONLY.includes(r.t)) {
+        const writes = await owner.$queryRaw<Array<{ policyname: string; cmd: string; roles: string[] }>>`
+          SELECT policyname, cmd, roles::text[] AS roles FROM pg_policies WHERE schemaname = 'public' AND tablename = ${r.t} AND cmd IN ('UPDATE', 'DELETE', 'ALL')`;
+        if (r.t === "RawEvent") expect(writes.every((w) => w.roles.length === 1 && w.roles[0] === "loopsignal_maint"), r.t).toBe(true);
+        else expect(writes, r.t).toEqual([]);
+      }
     }
   });
 

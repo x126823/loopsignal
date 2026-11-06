@@ -80,3 +80,29 @@ export async function markConnectionAuthFailed(organizationId: string, connectio
     }
   });
 }
+
+/**
+ * Key rotation: re-encrypt this organization's stored tokens from `from` to `to`. Idempotent (a blob that already opens with the new key
+ * is left alone); a blob that opens with neither is counted as failed and left untouched.
+ */
+export async function rekeyCredentials(organizationId: string, from: Buffer, to: Buffer): Promise<{ rewritten: number; alreadyCurrent: number; failed: number }> {
+  const out = { rewritten: 0, alreadyCurrent: 0, failed: 0 };
+  await withTenant({ organizationId }, async (tx) => {
+    for (const row of await tx.connectionCredential.findMany()) {
+      const context = aad(organizationId, row.connectionId);
+      try {
+        const plain = decryptField(row.tokens, from, context);
+        await tx.connectionCredential.update({ where: { id: row.id }, data: { tokens: encryptField(plain, to, context) } });
+        out.rewritten++;
+      } catch {
+        try {
+          decryptField(row.tokens, to, context);
+          out.alreadyCurrent++;
+        } catch {
+          out.failed++;
+        }
+      }
+    }
+  });
+  return out;
+}

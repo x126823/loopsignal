@@ -8,7 +8,7 @@ import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { ActionForm } from "@/components/action-form";
 import { formatDateTime, PROVIDER_LABEL, REVIEW_TYPE_LABEL, SIGNAL_LABEL, STATE_LABEL } from "@/lib/labels";
 import { listAwaitingFollowUp, listCandidates } from "@/modules/correlation";
-import { canResolveReviewTasks, listOpenReviewTasks } from "@/modules/lifecycle";
+import { canResolveReviewTasks, listOpenReviewTasksPage } from "@/modules/lifecycle";
 import { parseNotice } from "../../_lib/notices";
 import { requireContext } from "../../_lib/session";
 import { confirmCorrelationAction, rejectCorrelationAction, resolveReviewAction, retryFollowUpAction } from "../actions";
@@ -17,7 +17,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const ctx = await requireContext();
   const notice = parseNotice((await searchParams)["notice"]);
   // Cross-channel questions are decided on their own cards below (confirm or reject), never closed with a generic button.
-  const tasks = (await listOpenReviewTasks(ctx.principal)).filter((t) => t.type !== "CORRELATION");
+  const { tasks, total: totalTasks } = await listOpenReviewTasksPage(ctx.principal, { limit: 100, excludeCorrelation: true });
   const canResolve = canResolveReviewTasks(ctx.principal);
   const [candidates, awaiting] = await Promise.all([listCandidates(ctx.principal, { status: "PENDING" }), listAwaitingFollowUp(ctx.principal)]);
 
@@ -100,7 +100,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       <Card>
         <CardHeader>
           <CardTitle>Open tasks</CardTitle>
-          <CardDescription>{tasks.length === 0 ? "Nothing to review." : `${tasks.length} open, oldest first.${canResolve ? "" : " You can read the queue but not close tasks."}`}</CardDescription>
+          <CardDescription>{tasks.length === 0 ? "Nothing to review." : `${totalTasks > tasks.length ? `Showing the oldest ${tasks.length} of ${totalTasks} open tasks.` : `${tasks.length} open, oldest first.`}${canResolve ? "" : " You can read the queue but not close tasks."}`}</CardDescription>
         </CardHeader>
         {tasks.length > 0 && (
           <CardContent className="px-2">

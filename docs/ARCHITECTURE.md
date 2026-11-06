@@ -306,3 +306,24 @@ Structured logs (no content), request and job IDs, metrics on queue depth, analy
 ## 10. Deployment (initial)
 
 Docker Compose: `app`, `worker`, `postgres`, `redis`. Single-org PoC; configuration via validated env vars.
+
+## 11. Hardening (Sprint 13)
+
+Runbooks: `docs/runbooks/`. Review and findings: `docs/SECURITY_REVIEW.md`.
+
+**Retention and erasure** (`src/modules/retention`, with data-level work in `ingestion` and `intelligence`, which own the tables). A daily worker job removes content past each organization's windows (defaults: raw payloads 30 days after receipt; message bodies and the analysis quotes copied from them 180 days after the item closed, or after arrival if tied to no item). Content of a message that belongs to an item that is **still open** is never removed; the age and open-item rule is one SQL function, `retention_expired_message_ids`, so it cannot drift between callers. A message keeps its row, ids and metadata (it is part of the lifecycle record); its body becomes an encrypted tombstone, its hash is cleared, `contentPurgedAt` is set; quotes in analysis runs are replaced by a marker. Lifecycle events and the audit log hold no message text and are kept. An administrator can **erase one person** (everything they wrote, in every state, plus raw payloads, quotes, subjects and their name), audited with counts only.
+
+**The one exception to append-only.** `RawEvent` is append-only for every role, with a single narrow exception for retention and key rotation: a `NOLOGIN` role, `loopsignal_maint`, owns three `SECURITY DEFINER` functions, and the guard trigger lets that role (inside those functions only) delete a row or change the `payload` column and nothing else. Each function refuses any organization other than the caller's tenant context. `LifecycleEvent` and `AuditLog` have no exception.
+
+**Audit verification.** A daily job verifies every organization's hash chain and records `audit.chain_verified` in the chain itself; a failure is logged at error level and shown on the Retention page.
+
+**Key rotation.** `npm run ops:rotate-key` re-encrypts message bodies, raw payloads (through the maintenance function), Gmail tokens and Chat claim codes from one `FIELD_ENCRYPTION_KEY` to another: offline, idempotent, resumable, leaving anything neither key opens untouched and failing loudly. There is no dual-key runtime mode.
+
+**Browser-side defenses.** `src/proxy.ts` applies a nonce-based Content Security Policy to every request (strict in production; development relaxes only `unsafe-eval`, hot-reload sockets and the style nonce), and `next.config.ts` adds the static headers. Authorization is never decided in the proxy: every page and server action resolves the caller itself, and a structural test fails if an action does not.
+
+**Authentication in production.** `AUTH_URL` is required and pins the host Auth.js trusts. (Setting `trustHost: false` explicitly, as the code did before, makes every production sign-in fail.)
+
+**Capacity and the database pool.** `DB_POOL_MAX` (20) and `DB_TX_MAX_WAIT_MS` (10 s) are configurable. List pages are bounded (the review queue shows the oldest 100 with an honest total that counts only what the viewer may see). Measured numbers are in `docs/runbooks/load-test.md`.
+
+**Backup and restore.** `npm run drill:restore` dumps the database, restores it into a scratch database and proves it: same rows, intact audit chains, RLS and policies present, grants kept, append-only guards and maintenance-function ownership restored, tenant confinement intact, stored content decryptable. It runs in CI, and each check is tested to fail when its subject is damaged.
+

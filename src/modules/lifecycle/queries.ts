@@ -192,17 +192,30 @@ export interface ReviewTaskView {
 const REVIEW_READERS = new Set(["ORG_ADMIN", "TEAM_LEAD", "MEMBER", "AUDITOR"]);
 const REVIEW_RESOLVERS = new Set(["ORG_ADMIN", "TEAM_LEAD", "MEMBER"]);
 
-export async function listOpenReviewTasks(principal: Principal): Promise<ReviewTaskView[]> {
-  if (!REVIEW_READERS.has(principal.orgRole)) return [];
+/**
+ * Open review tasks the principal may see, oldest first, at most `limit` (default 100: a backlog of thousands must not become a page of
+ * thousands, which is what made this page take seconds under load). `total` counts only the tasks the principal may see, so it never reveals
+ * how much work other teams have. Visibility is decided before the cut, so a visible task is never hidden behind other teams' tasks.
+ * `excludeCorrelation` leaves out cross-channel questions, which are decided on their own cards. At most 5000 open tasks are read.
+ */
+export async function listOpenReviewTasks(principal: Principal, opts: { limit?: number; excludeCorrelation?: boolean } = {}): Promise<ReviewTaskView[]> {
+  return (await listOpenReviewTasksPage(principal, opts)).tasks;
+}
+
+export async function listOpenReviewTasksPage(principal: Principal, opts: { limit?: number; excludeCorrelation?: boolean } = {}): Promise<{ tasks: ReviewTaskView[]; total: number }> {
+  if (!REVIEW_READERS.has(principal.orgRole)) return { tasks: [], total: 0 };
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
   return withTenant(ctxOf(principal), async (tx) => {
-    const tasks = await tx.reviewTask.findMany({ where: { status: "OPEN" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const where = { status: "OPEN" as const, ...(opts.excludeCorrelation ? { type: { not: "CORRELATION" as const } } : {}) };
+    const tasks = await tx.reviewTask.findMany({ where, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 5_000 });
     const items = await tx.trackedItem.findMany({ where: { id: { in: tasks.filter((t) => t.refType === "TrackedItem").map((t) => t.refId) } } });
     const byId = new Map(items.map((i) => [i.id, i]));
-    return tasks.flatMap((t): ReviewTaskView[] => {
+    const views = tasks.flatMap((t): ReviewTaskView[] => {
       if (t.refType !== "TrackedItem") return [{ id: t.id, type: t.type, refType: t.refType, refId: t.refId, itemTitle: null, createdAt: t.createdAt }];
       const item = byId.get(t.refId);
       return item && canView(principal, item.teamId) ? [{ id: t.id, type: t.type, refType: t.refType, refId: t.refId, itemTitle: item.title, createdAt: t.createdAt }] : [];
     });
+    return { tasks: views.slice(0, limit), total: views.length };
   });
 }
 

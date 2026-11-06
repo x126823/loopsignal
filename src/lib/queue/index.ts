@@ -4,3 +4,4 @@ export {
   type AnalyzeMessageJob, type CorrelationFollowUpJob, type ChatScanJob, type DeadLetterRecord, type GmailScanJob, type IngestSourceJob, type QueueName, type SlaRiskJob, type SlaScanJob,
 } from "./jobs";
 export { closeQueueHub, configFromEnv, deadLetterName, DEFAULT_JOB_OPTIONS, DelayedError, QueueHub, queueHub, UnrecoverableError, type QueueConfig } from "./queues";
+export { listDeadLetters, retryDeadLetter, type DeadLetterView, type RetryOutcome } from "./dead-letters";

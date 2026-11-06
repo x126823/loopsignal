@@ -61,6 +61,8 @@ export const NOTICES = {
   chat_person_linked: { tone: "success", text: "Linked. Their future Chat messages count as your team's." },
   chat_person_unlinked: { tone: "info", text: "Unlinked." },
   chat_person_invalid: { tone: "danger", text: "That person or user could not be linked." },
+  retention_saved: { tone: "success", text: "Retention windows saved. They apply at the next daily pass." },
+  retention_invalid: { tone: "danger", text: "Those windows are not allowed. Raw payloads need at least 7 days, message bodies at least 90, and a raw payload cannot be kept longer than the body it copies." },
   sync_queued: { tone: "success", text: "Sync queued." },
   conflict: { tone: "warning", text: "Someone else changed this at the same moment. Please try again." },
 } as const satisfies Record<string, { tone: NoticeTone; text: string }>;

@@ -23,6 +23,8 @@ const schema = z
     LLM_DAILY_TOKEN_BUDGET: z.coerce.number().int().positive().default(2_000_000),
     /** Base64 of 32 random bytes. Encrypts message bodies and raw payloads (see src/lib/crypto). */
     FIELD_ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64"),
+    /** The public URL of the app. Required in production: it pins the host Auth.js will trust (and redirect to). */
+    AUTH_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
     AUTH_DEV_LOGIN: z.enum(["true", "false"]).default("false"),
     AUTH_GOOGLE_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     AUTH_GOOGLE_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -41,6 +43,16 @@ const schema = z
     GMAIL_PUSH_SERVICE_ACCOUNT: z.preprocess(emptyToUndefined, z.string().email().optional()),
     /** How far back the first sync (and a resync after a history gap) reads. */
     GMAIL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /**
+     * Database connections this process may hold. A page makes several short transactions in a row, so with the library default (10) about
+     * ten concurrent users already queue for a connection. The web server and the worker each hold their own pool, so keep
+     * (web + worker) * DB_POOL_MAX under Postgres's max_connections (100 by default).
+     */
+    DB_POOL_MAX: z.coerce.number().int().min(2).max(200).default(20),
+    /** How long a transaction may wait for a free connection before failing. Brief queueing is normal under load; failing fast is not. */
+    DB_TX_MAX_WAIT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+    /** Retention and audit-chain verification run on a schedule while this is true (the default). `false` is the incident switch: it stops the schedules, nothing else. */
+    MAINTENANCE_JOBS_ENABLED: z.enum(["true", "false"]).default("true"),
     /** Google Chat integration. OFF by default; with it off no Chat route, scan or adapter does anything. */
     GOOGLE_CHAT_ENABLED: z.enum(["true", "false"]).default("false"),
     /**
@@ -56,6 +68,10 @@ const schema = z
   .refine((e) => !(e.NODE_ENV === "production" && e.AUTH_DEV_LOGIN === "true"), {
     path: ["AUTH_DEV_LOGIN"],
     message: "dev login must be disabled in production",
+  })
+  .refine((e) => e.NODE_ENV !== "production" || (e.AUTH_URL !== undefined && (e.AUTH_URL.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(e.AUTH_URL))), {
+    path: ["AUTH_URL"],
+    message: "production needs AUTH_URL, and it must be https (http only for localhost)",
   })
   .refine((e) => !(e.GMAIL_ENABLED === "true" && (!e.GOOGLE_OAUTH_CLIENT_ID || !e.GOOGLE_OAUTH_CLIENT_SECRET)), {
     path: ["GOOGLE_OAUTH_CLIENT_ID"],

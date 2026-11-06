@@ -9,6 +9,7 @@ import { chatEnabled, gmailEnabled } from "@/modules/sources";
 import { handleChatScan, registerChatScanSchedule } from "./chat-scan";
 import { handleCorrelationFollowUp } from "./correlation-follow-up";
 import { handleGmailScan, registerGmailScanSchedule } from "./gmail-scan";
+import { handleAuditVerify, handleRetention, registerMaintenanceSchedules } from "./maintenance";
 import { handleSlaRisk } from "./sla-risk";
 import { handleSlaScan, registerSlaScanSchedule } from "./sla-scan";
 
@@ -64,7 +65,17 @@ if (chatEnabled()) {
   void registerChatScanSchedule(hub).catch((e) => log("error", "chat.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
 }
 
-const workers = [ingest, analyze, slaScan, slaRisk, followUp, ...gmailWorkers, ...chatWorkers];
+// Maintenance: retention and audit-chain verification, daily, one at a time. The workers always exist (so a manual run works); the schedules
+// exist only while MAINTENANCE_JOBS_ENABLED is true.
+const retention = hub.worker(QUEUES.retention, async () => handleRetention(), { concurrency: 1 });
+retention.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.retention, jobId: job?.id ?? null, errorName: err.name }));
+const auditVerify = hub.worker(QUEUES.auditVerify, async () => handleAuditVerify(), { concurrency: 1 });
+auditVerify.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.auditVerify, jobId: job?.id ?? null, errorName: err.name }));
+if (getEnv().MAINTENANCE_JOBS_ENABLED === "true") {
+  void registerMaintenanceSchedules(hub).catch((e) => log("error", "maintenance.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
+}
+
+const workers = [ingest, analyze, slaScan, slaRisk, followUp, ...gmailWorkers, ...chatWorkers, retention, auditVerify];
 log("info", "worker.started", { gmail: gmailEnabled(), chat: chatEnabled(), queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
 
 let stopping = false;

@@ -52,6 +52,8 @@ export async function fakeGoogle(path: "consent" | "add-message" | "expire-histo
   if (!res.ok) throw new Error(`fake google ${path} failed: ${res.status}`);
   return (await res.json()) as Record<string, unknown>;
 }
+export const retentionDemo = (org: Fx, ageDays: number) => cli<{ rawEvents: number; messages: number }>("retention-demo", { org, ageDays });
+export const auditVerify = () => cli<{ organizations: number; broken: number }>("audit-verify");
 export const cleanup = (...orgs: Fx[]) => cli("cleanup", { orgs });
 
 export const stateOf = async (itemId: string) => (await sql<{ state: string }>(`select state from "TrackedItem" where id = $1`, [itemId]))[0]!.state;
