@@ -78,12 +78,16 @@ export async function ingestEvent(tx: TenantTx, p: IngestParams): Promise<Ingest
   });
   const sender = await tx.participant.findUniqueOrThrow({ where: { organizationId_address: { organizationId, address: normalized.sender.address } } });
 
+  // A message from a person who is linked to one of OUR users is our team's, whichever channel it came through (Chat gives no mailbox owner
+  // to tell us). Only INBOUND is ever upgraded; INTERNAL and OUTBOUND stay as the adapter said.
+  const direction = normalized.direction === "INBOUND" && sender.userId ? "OUTBOUND" : normalized.direction;
+
   const { count } = await tx.message.createMany({
     data: [{
       organizationId, monitoredSourceId: p.monitoredSourceId, threadId: thread.id, provider: normalized.provider,
       externalMessageId: normalized.externalMessageId, senderParticipantId: sender.id, rawEventId: raw.id, sentAt: normalized.sentAt,
       subject: normalized.subject ?? null, bodyText: encryptField(normalized.bodyText, p.fieldKey, `${organizationId}:Message.bodyText`),
-      bodyHash: sha256(normalized.bodyText), direction: normalized.direction,
+      bodyHash: sha256(normalized.bodyText), direction,
     }],
     skipDuplicates: true,
   });

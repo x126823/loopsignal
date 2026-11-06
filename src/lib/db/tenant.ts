@@ -44,7 +44,7 @@ const ORG_SCOPED_MODELS = new Set([
   "SourceConnection", "MonitoredSource", "RawEvent", "Thread", "Participant", "Message", "TrackedItem",
   "ItemMessageLink", "LifecycleEvent", "ItemOwnership", "ApprovalRequest", "CorrelationCandidate", "ReviewTask",
   "AnalysisRun", "BusinessCalendar", "SlaPolicy", "SlaTimer", "SlaBreach", "Notification",
-  "NotificationPreference", "AuditLog", "MetricSnapshot", "ConnectionCredential",
+  "NotificationPreference", "AuditLog", "MetricSnapshot", "ConnectionCredential", "SourceClaim",
 ]);
 
 /** Append-only tables (triggers and grants enforce this too; rejecting here gives a clear error first). */
@@ -177,4 +177,10 @@ export async function listOrganizationsWithGmail(): Promise<string[]> {
  */
 export async function findGmailMailboxSources(address: string): Promise<Array<{ organizationId: string; monitoredSourceId: string }>> {
   return getScopedClient().$queryRaw<Array<{ organizationId: string; monitoredSourceId: string }>>`SELECT * FROM gmail_mailbox_sources(${address})`;
+}
+
+/** Organizations with an enabled Google Chat space, for the Chat poll scan. Ids only. */
+export async function listOrganizationsWithChat(): Promise<string[]> {
+  const rows = await getScopedClient().$queryRaw<Array<{ id: string }>>`SELECT chat_scan_org_ids() AS id`;
+  return rows.map((r) => r.id);
 }

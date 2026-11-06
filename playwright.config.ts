@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync } from "node:fs";
 import { defineConfig } from "@playwright/test";
 
@@ -18,6 +19,14 @@ Object.assign(process.env, {
   APP_BASE_URL: "http://localhost:3000",
   GMAIL_PUBSUB_TOPIC: "",
 });
+
+// Google Chat likewise: a service account key generated here, for this run only. The app signs with it and the fake verifies with it.
+// This file is loaded by the runner and again by each test worker, so the key is generated once and inherited, never regenerated.
+process.env["E2E_CHAT_SERVICE_ACCOUNT_JSON"] ??= JSON.stringify({
+  type: "service_account", client_email: "chat-app@synthetic-project.iam.gserviceaccount.com",
+  private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+});
+Object.assign(process.env, { GOOGLE_CHAT_ENABLED: "true", GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: process.env["E2E_CHAT_SERVICE_ACCOUNT_JSON"] });
 
 export default defineConfig({
   testDir: "./e2e",

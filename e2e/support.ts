@@ -47,7 +47,7 @@ export const gmailSync = (organizationId: string, monitoredSourceId: string, ana
   cli<{ summary: { status: string; reason?: string; messagesCreated: number; messagesExisting: number }; statuses: string[]; reasons: string[] }>("gmail-sync", { organizationId, monitoredSourceId, analyze });
 
 /** Steer the fake Google (a separate process): who the next consent grants, mail arriving, access being revoked. */
-export async function fakeGoogle(path: "consent" | "add-message" | "expire-history" | "revoke-refresh" | "expire-access" | "state", body: unknown = {}): Promise<Record<string, unknown>> {
+export async function fakeGoogle(path: "consent" | "add-message" | "expire-history" | "revoke-refresh" | "expire-access" | "state" | "chat-add-message" | "chat-membership" | "chat-status", body: unknown = {}): Promise<Record<string, unknown>> {
   const res = await fetch(`http://127.0.0.1:${process.env["FAKE_GOOGLE_PORT"] ?? 4010}/__control/${path}`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`fake google ${path} failed: ${res.status}`);
   return (await res.json()) as Record<string, unknown>;

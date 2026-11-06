@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ProviderApiError, ProviderAuthError, ProviderCursorExpiredError, ProviderRateLimitError } from "./types";
+import { createGoogleHttp, type GoogleHttpOptions } from "./google-http";
+import { ProviderApiError, ProviderCursorExpiredError } from "./types";
 
 /**
  * Minimal Google OAuth + Gmail REST client: plain fetch, every response validated with Zod, no new dependency.
@@ -17,6 +18,8 @@ export interface GoogleEndpoints {
   /** Base of the Gmail user resource, e.g. https://gmail.googleapis.com/gmail/v1/users/me */
   gmail: string;
   certs: string;
+  /** Base of the Google Chat REST API, e.g. https://chat.googleapis.com/v1 */
+  chat: string;
 }
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
@@ -27,7 +30,7 @@ export function googleEndpoints(testBase?: string): GoogleEndpoints {
     const url = new URL(testBase);
     if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw new Error("The Google test endpoint must be a loopback address");
     const base = testBase.replace(/\/$/, "");
-    return { auth: `${base}/authorize`, token: `${base}/token`, revoke: `${base}/revoke`, gmail: `${base}/gmail/v1/users/me`, certs: `${base}/certs` };
+    return { auth: `${base}/authorize`, token: `${base}/token`, revoke: `${base}/revoke`, gmail: `${base}/gmail/v1/users/me`, certs: `${base}/certs`, chat: `${base}/chat/v1` };
   }
   return {
     auth: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -35,19 +38,14 @@ export function googleEndpoints(testBase?: string): GoogleEndpoints {
     revoke: "https://oauth2.googleapis.com/revoke",
     gmail: "https://gmail.googleapis.com/gmail/v1/users/me",
     certs: "https://www.googleapis.com/oauth2/v3/certs",
+    chat: "https://chat.googleapis.com/v1",
   };
 }
 
-export interface GoogleClientOptions {
+export interface GoogleClientOptions extends GoogleHttpOptions {
   endpoints: GoogleEndpoints;
   clientId: string;
   clientSecret: string;
-  fetchImpl?: typeof fetch;
-  /** Replaced in tests so backoff costs nothing. */
-  sleep?: (ms: number) => Promise<void>;
-  maxAttempts?: number;
-  baseDelayMs?: number;
-  timeoutMs?: number;
 }
 
 const tokenResponse = z.object({
@@ -101,49 +99,8 @@ export interface TokenGrant {
 }
 
 export function createGoogleClient(opts: GoogleClientOptions) {
-  const doFetch = opts.fetchImpl ?? fetch;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const maxAttempts = opts.maxAttempts ?? 4;
-  const baseDelay = opts.baseDelayMs ?? 500;
-  const timeoutMs = opts.timeoutMs ?? 20_000;
-
-  /** One logical request: retries throttling and server errors, maps everything else to a typed error. Returns parsed JSON or null (204). */
-  async function send(url: string, init: RequestInit): Promise<{ status: number; json: unknown }> {
-    for (let attempt = 1; ; attempt++) {
-      let res: Response;
-      try {
-        res = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-      } catch {
-        if (attempt >= maxAttempts) throw new ProviderApiError(0); // network failure or timeout
-        await sleep(baseDelay * 2 ** (attempt - 1));
-        continue;
-      }
-      const text = await res.text();
-      let json: unknown = null;
-      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-
-      if (res.ok) return { status: res.status, json };
-      const reason = (json as { error?: { errors?: Array<{ reason?: string }> } } | null)?.error?.errors?.[0]?.reason ?? "";
-      const throttled = res.status === 429 || (res.status === 403 && /ratelimit/i.test(reason));
-      if (throttled || res.status >= 500) {
-        if (attempt >= maxAttempts) throw throttled ? new ProviderRateLimitError() : new ProviderApiError(res.status);
-        const retryAfter = Number(res.headers.get("retry-after"));
-        await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 30) * 1000 : baseDelay * 2 ** (attempt - 1));
-        continue;
-      }
-      if (res.status === 401) throw new ProviderAuthError("unauthorized");
-      if (res.status === 403) throw new ProviderAuthError("forbidden");
-      if (res.status === 400 && (json as { error?: unknown } | null)?.error === "invalid_grant") throw new ProviderAuthError("invalid_grant");
-      throw new ProviderApiError(res.status);
-    }
-  }
-
+  const { send, parse } = createGoogleHttp(opts);
   const bearer = (token: string): RequestInit => ({ headers: { authorization: `Bearer ${token}` } });
-  const parse = <T>(schema: z.ZodType<T>, json: unknown, status = 200): T => {
-    const r = schema.safeParse(json);
-    if (!r.success) throw new ProviderApiError(status); // never echo issues: they can contain content
-    return r.data;
-  };
   const tokenCall = async (params: Record<string, string>): Promise<TokenGrant> => {
     const body = new URLSearchParams({ client_id: opts.clientId, client_secret: opts.clientSecret, ...params });
     const { json } = await send(opts.endpoints.token, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });

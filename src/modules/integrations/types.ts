@@ -79,6 +79,14 @@ export class ProviderApiError extends Error {
   }
 }
 
+/** A source (a Chat space) cannot be read: the app was removed from it, was never added, or its access is not approved. Not a credential problem of one connection, so nothing is disabled; the sync just skips it quietly and tries again next time. */
+export class ProviderSourceUnavailableError extends Error {
+  constructor() {
+    super("The source cannot be read by the provider app");
+    this.name = "ProviderSourceUnavailableError";
+  }
+}
+
 /** The stored cursor is too old or unreadable (Gmail: history gap). The adapter normally recovers by itself. */
 export class ProviderCursorExpiredError extends Error {
   constructor() {

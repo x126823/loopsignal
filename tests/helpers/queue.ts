@@ -11,7 +11,7 @@ export function createTestHub(): QueueHub {
 }
 
 export async function destroyTestHub(hub: QueueHub): Promise<void> {
-  for (const name of [QUEUES.ingestSource, QUEUES.analyzeMessage, QUEUES.slaScan, QUEUES.slaRisk, QUEUES.correlationFollowUp, QUEUES.gmailScan, deadLetterName(QUEUES.ingestSource), deadLetterName(QUEUES.analyzeMessage)]) {
+  for (const name of [QUEUES.ingestSource, QUEUES.analyzeMessage, QUEUES.slaScan, QUEUES.slaRisk, QUEUES.correlationFollowUp, QUEUES.gmailScan, QUEUES.chatScan, deadLetterName(QUEUES.ingestSource), deadLetterName(QUEUES.analyzeMessage)]) {
     await hub.queue(name).obliterate({ force: true });
   }
   await hub.close();

@@ -48,10 +48,10 @@
 - `historyId` gaps force full resync; handle rate limits and quotas with backoff.
 - Thread vs. message semantics; delegated/shared mailboxes; labels as source filters.
 
-**Google Chat**
-- Reading other users' messages generally needs an app added to the space or domain-wide delegation with admin approval; capabilities differ for DMs vs. spaces.
-- Event subscription support and scopes are limited and change over time. **Early spike required (Sprint 12)** before committing to features that depend on it.
-- Message edits/deletes and threading differ from email; normalization must tolerate this.
+**Google Chat** (decided in Sprint 12; see `docs/GOOGLE_CHAT.md`)
+- Controls in place: app authentication only (no domain-wide delegation, no per-user tokens), so private DMs are out of reach by construction; one product-wide service account held as an env secret (never logged, never in a job, audit row or error; the key file's `token_uri` is ignored so a doctored file cannot redirect a signed assertion); a space is bound to an organization only by a **posted proof code** and to at most one organization at a time (locked), so one customer cannot claim another's space; admin-only at every step; a space the app cannot read is skipped, not disabled; the integration is a feature flag that is off by default; a subject is built from the sender, never from message text (subjects are unencrypted).
+- Still true: anyone who is a member of a space (an external guest, say) can post a code and so bind it to *their* organization if it is not already bound; binding gives the binder's tenant a copy of messages that member could already read. Mitigation to consider before real use: admin approval from the space's owning domain. Whether the app sees a space is decided by who adds it, which a Workspace admin can restrict.
+- Message edits/deletes and threading differ from email; normalization tolerates this (see the decision record's limits).
 
 **Correlation**
 - A false merge hides work (worse than a false split). Every match, however strong, goes to human review: there is no auto-link. Decisions are audited, reversible by a split until the attached conversation has moved the item forward, and limited to people who may act on the item and see the message. The advisory model can only suppress a candidate, never link one. Stored rationale holds counts only, not message text.
@@ -62,7 +62,7 @@
 ## 5. Security controls checklist (verified in Sprint 13)
 - [ ] RLS enabled and tested on all tenant tables
 - [ ] Append-only enforcement tested
-- [ ] Token encryption and rotation tested (encryption, context binding and refresh tested in Sprint 11; key rotation and a real-credential drill are Sprint 13)
+- [ ] Token encryption and rotation tested (Chat: the app's key is an env secret, covered by a confinement test; encryption, context binding and refresh tested in Sprint 11; key rotation and a real-credential drill are Sprint 13)
 - [ ] Webhook verification tested (Pub/Sub token verification tested against a fake Google in Sprint 11)
 - [ ] Injection fixture suite green
 - [ ] Confirm/close require human: tested

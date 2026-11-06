@@ -5,7 +5,8 @@ import { closeQueueHub, QUEUES, queueHub } from "@/lib/queue";
 import { handleIngestSourceJob } from "@/modules/ingestion";
 import { createProviderFromEnv } from "@/modules/intelligence";
 import { analyzeProcessor } from "./analyze-message";
-import { gmailEnabled } from "@/modules/sources";
+import { chatEnabled, gmailEnabled } from "@/modules/sources";
+import { handleChatScan, registerChatScanSchedule } from "./chat-scan";
 import { handleCorrelationFollowUp } from "./correlation-follow-up";
 import { handleGmailScan, registerGmailScanSchedule } from "./gmail-scan";
 import { handleSlaRisk } from "./sla-risk";
@@ -54,8 +55,17 @@ if (gmailEnabled()) {
   void registerGmailScanSchedule(hub).catch((e) => log("error", "gmail.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
 }
 
-const workers = [ingest, analyze, slaScan, slaRisk, followUp, ...gmailWorkers];
-log("info", "worker.started", { gmail: gmailEnabled(), queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
+// Google Chat: same pattern, its own flag.
+const chatWorkers = [];
+if (chatEnabled()) {
+  const chatScan = hub.worker(QUEUES.chatScan, async () => handleChatScan({ hub }), { concurrency: 1 });
+  chatScan.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.chatScan, jobId: job?.id ?? null, errorName: err.name }));
+  chatWorkers.push(chatScan);
+  void registerChatScanSchedule(hub).catch((e) => log("error", "chat.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
+}
+
+const workers = [ingest, analyze, slaScan, slaRisk, followUp, ...gmailWorkers, ...chatWorkers];
+log("info", "worker.started", { gmail: gmailEnabled(), chat: chatEnabled(), queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
 
 let stopping = false;
 async function shutdown(signal: string): Promise<void> {
