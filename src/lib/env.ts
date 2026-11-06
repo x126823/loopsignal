@@ -41,6 +41,15 @@ const schema = z
     GMAIL_PUSH_SERVICE_ACCOUNT: z.preprocess(emptyToUndefined, z.string().email().optional()),
     /** How far back the first sync (and a resync after a history gap) reads. */
     GMAIL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+    /** Google Chat integration. OFF by default; with it off no Chat route, scan or adapter does anything. */
+    GOOGLE_CHAT_ENABLED: z.enum(["true", "false"]).default("false"),
+    /**
+     * The key file (JSON) of the ONE service account that is the product's Chat app. It acts as the app, never as a person, and is a
+     * product-wide secret (not per customer). Never logged; validated when first used so a bad value never echoes into an error.
+     */
+    GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: z.preprocess(emptyToUndefined, z.string().optional()),
+    /** How far back the first read of a newly bound space goes. */
+    GOOGLE_CHAT_BACKFILL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     /** TESTS ONLY: point every Google endpoint (auth, token, revoke, Gmail API, signing keys) at a fake server. Refused in production. */
     GOOGLE_TEST_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   })
@@ -51,6 +60,10 @@ const schema = z
   .refine((e) => !(e.GMAIL_ENABLED === "true" && (!e.GOOGLE_OAUTH_CLIENT_ID || !e.GOOGLE_OAUTH_CLIENT_SECRET)), {
     path: ["GOOGLE_OAUTH_CLIENT_ID"],
     message: "Gmail needs GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET",
+  })
+  .refine((e) => !(e.GOOGLE_CHAT_ENABLED === "true" && !e.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON), {
+    path: ["GOOGLE_CHAT_SERVICE_ACCOUNT_JSON"],
+    message: "Google Chat needs GOOGLE_CHAT_SERVICE_ACCOUNT_JSON",
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.GOOGLE_TEST_BASE_URL), {
     path: ["GOOGLE_TEST_BASE_URL"],

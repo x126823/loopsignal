@@ -55,3 +55,8 @@ export function formObject(formData: FormData): Record<string, string> {
 export const connectGmailForm = z.object({ teamId: uuid });
 export const disconnectForm = z.object({ connectionId: uuid });
 export const syncNowForm = z.object({ sourceId: uuid });
+
+export const chatClaimForm = z.object({ space: z.string().trim().min(1).max(300), teamId: uuid });
+export const claimIdForm = z.object({ claimId: uuid });
+export const removeSpaceForm = z.object({ sourceId: uuid });
+export const linkPersonForm = z.object({ participantId: uuid, userId: z.union([uuid, z.literal("")]).transform((v) => (v === "" ? null : v)) });

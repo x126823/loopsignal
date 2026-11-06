@@ -86,4 +86,24 @@ describe("parseEnv", () => {
       expect(() => parseEnv({ ...valid, GMAIL_BACKFILL_DAYS: "365" })).toThrow(/GMAIL_BACKFILL_DAYS/);
     });
   });
+
+  describe("Google Chat settings", () => {
+    it("is off by default and needs nothing else", () => {
+      const env = parseEnv(valid);
+      expect([env.GOOGLE_CHAT_ENABLED, env.GOOGLE_CHAT_BACKFILL_DAYS, env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON]).toEqual(["false", 7, undefined]);
+    });
+
+    it("needs the app's key file when enabled, and names the key without its value", () => {
+      expect(parseEnv({ ...valid, GOOGLE_CHAT_ENABLED: "true", GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: "{}" }).GOOGLE_CHAT_ENABLED).toBe("true");
+      expect(() => parseEnv({ ...valid, GOOGLE_CHAT_ENABLED: "true" })).toThrow(/GOOGLE_CHAT_SERVICE_ACCOUNT_JSON/);
+      expect(() => parseEnv({ ...valid, GOOGLE_CHAT_ENABLED: "true", GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: "" })).toThrow(/GOOGLE_CHAT_SERVICE_ACCOUNT_JSON/);
+      expect(() => parseEnv({ ...valid, GOOGLE_CHAT_ENABLED: "yes" })).toThrow(/GOOGLE_CHAT_ENABLED/);
+    });
+
+    it("bounds the backfill window", () => {
+      expect(() => parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "0" })).toThrow(/GOOGLE_CHAT_BACKFILL_DAYS/);
+      expect(() => parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "365" })).toThrow(/GOOGLE_CHAT_BACKFILL_DAYS/);
+      expect(parseEnv({ ...valid, GOOGLE_CHAT_BACKFILL_DAYS: "30" }).GOOGLE_CHAT_BACKFILL_DAYS).toBe(30);
+    });
+  });
 });

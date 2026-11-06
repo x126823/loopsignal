@@ -25,4 +25,12 @@ describe("credential table access", () => {
   it("the stored token column is read only by the credential store", () => {
     expect(offenders(/ConnectionCredential\.tokens/, (rel) => rel === "src/modules/sources/credentials.ts")).toEqual([]);
   });
+
+  it("the Chat app's key file is read only by the env schema and the sources module", () => {
+    expect(offenders(/GOOGLE_CHAT_SERVICE_ACCOUNT_JSON/, (rel) => rel === "src/lib/env.ts" || rel === "src/lib/env.test.ts" || rel === "src/modules/sources/chat.ts")).toEqual([]);
+  });
+
+  it("only the credential modules touch private keys or sign assertions", () => {
+    expect(offenders(/createSign|privateKey/, (rel) => rel.startsWith("src/modules/integrations/") || rel === "src/modules/sources/chat.ts")).toEqual([]);
+  });
 });

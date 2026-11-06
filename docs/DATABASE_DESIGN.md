@@ -14,6 +14,7 @@ PostgreSQL via Prisma. All tenant-owned tables include `organizationId` (FK, ind
 ### Sources
 - **SourceConnection**: organizationId, provider (`GMAIL|GOOGLE_CHAT|SYNTHETIC`), ownerUserId, encryptedCredentialRef (unused: credentials live in `ConnectionCredential`), scopes, status (`ACTIVE|PAUSED|REVOKED|ERROR`)
 - **ConnectionCredential** (Sprint 11): organizationId, connectionId (unique with org, cascade), tokens (`Bytes`, AES-256-GCM of the access and refresh token, AAD = `<org>:ConnectionCredential.tokens:<connection>`), accessTokenExpiresAt, watchExpiresAt. RLS with select, insert, update and delete policies. Only `src/modules/sources` queries it (enforced by a test).
+- **SourceClaim** (Sprint 12): organizationId, provider, externalId (the space), teamId (same-tenant FK), code (`Bytes`, AES-GCM, AAD `<org>:SourceClaim.code`), status (`PENDING|VERIFIED|SUPERSEDED`), createdByUserId, createdAt, expiresAt, verifiedAt. One `PENDING` claim per (org, provider, externalId) (partial unique index). RLS: select, insert, update.
 - **MonitoredSource**: connectionId, kind (`MAILBOX|LABEL|SPACE`), externalId, teamId, enabled
 - **SourceCursor**: monitoredSourceId, cursor (historyId / sync token), updatedAt
 - **WebhookSubscription**: connectionId, externalId, expiresAt, status
@@ -70,7 +71,7 @@ CorrelationCandidate N─1 TrackedItem
 - Encrypted columns (`Message.bodyText`, `RawEvent.payload`) are `Bytes`: `version | iv | tag | ciphertext`, AES-256-GCM with the row's context as AAD (`src/lib/crypto`).
 - Metric timestamps on `TrackedItem` are written only by the lifecycle module, in the same transaction as the event that causes them.
 - Reopen: new cycle number on events; prior timestamps preserved in events; item-level timestamps reflect the current cycle.
-- Cross-tenant reads are limited to narrow `SECURITY DEFINER` functions that return ids only: `sla_scan_org_ids()`, `gmail_scan_org_ids()` (organizations with an active Gmail connection) and `gmail_mailbox_sources(address)` (enabled mailbox sources watching an address, for the Pub/Sub endpoint, which never knows the organization). Everything done afterwards runs under that organization's own context.
+- Cross-tenant reads are limited to narrow `SECURITY DEFINER` functions that return ids only: `sla_scan_org_ids()`, `gmail_scan_org_ids()` (organizations with an active Gmail connection) `gmail_mailbox_sources(address)` (enabled mailbox sources watching an address, for the Pub/Sub endpoint, which never knows the organization), `chat_scan_org_ids()` (organizations with an enabled Chat space) and `chat_space_bound_elsewhere(space, org)` (a boolean: is this space bound by another organization? It also takes a per-space advisory lock until the caller's transaction ends, so two organizations cannot bind the same space at once). Everything done afterwards runs under that organization's own context.
 - Encryption: message bodies, raw payloads, and credentials encrypted at the application layer (envelope encryption).
 - RLS: policy `"organizationId" = app_org_id()` (reads `app.org_id`, NULL when unset) on all tenant tables, `FORCE`d; `Membership` also readable by `userId = app_user_id()`; `User` and `Organization` have their own policies (see migration `tenancy_core`). App role is non-superuser, non-owner, no `BYPASSRLS`, with per-table grants.
 

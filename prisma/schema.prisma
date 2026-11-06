@@ -102,6 +102,12 @@ enum ConnectionStatus {
   ERROR
 }
 
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  SUPERSEDED
+}
+
 enum MonitoredSourceKind {
   MAILBOX
   LABEL
@@ -253,6 +259,26 @@ model MonitoredSource {
 
   @@unique([organizationId, id])
   @@unique([organizationId, connectionId, kind, externalId])
+}
+
+/// A pending request to bind an external source (a Chat space) to this organization. It is proven by posting the one-time code in
+/// the source itself. The code is stored encrypted (AAD binds it to the organization) so the admin can be shown it again until it is
+/// used or expires. teamId is a same-tenant FK declared in migration SQL.
+model SourceClaim {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  organizationId  String         @db.Uuid
+  provider        SourceProvider
+  externalId      String
+  teamId          String         @db.Uuid
+  code            Bytes
+  status          ClaimStatus    @default(PENDING)
+  createdByUserId String         @db.Uuid
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  expiresAt       DateTime       @db.Timestamptz(3)
+  verifiedAt      DateTime?      @db.Timestamptz(3)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, provider, externalId])
 }
 
 /// Immutable record of what the provider sent. Append-only (trigger).

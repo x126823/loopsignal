@@ -7,3 +7,7 @@ export { ConnectionAuthFailedError, getAccessToken, markConnectionAuthFailed, wi
 export { beginGmailConnect, completeGmailConnect, makeState, OAUTH_COOKIE, OAuthError, readState, type ConnectedMailbox, type OAuthFailure } from "./oauth";
 export { handleGmailPush, type PushDeps, type PushOutcome } from "./push";
 export { ensureWatch, renewDueWatches, type RenewalSummary } from "./watch";
+export {
+  chatAdapterFor, chatEnabled, ChatClaimError, ChatDisabledError, listChatSpaces, makeClaimCode, parseSpace, removeChatSpace, startSpaceClaim, verifySpaceClaim,
+  type ChatDeps, type ChatSpacesView, type ClaimFailure, type RemoveOutcome, type StartedClaim, type VerifyOutcome,
+} from "./chat";

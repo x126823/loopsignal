@@ -4,7 +4,7 @@ import { getEnv } from "@/lib/env";
 import { log } from "@/lib/log";
 import { jobIds, QUEUES, type QueueHub } from "@/lib/queue";
 import { getAdapter, type AdapterRegistry } from "@/modules/integrations";
-import { gmailAdapterFor } from "@/modules/sources";
+import { chatAdapterFor, gmailAdapterFor } from "@/modules/sources";
 import { ingestEvent, sha256 } from "./ingest";
 
 export interface SyncDeps {
@@ -19,7 +19,7 @@ export interface SyncDeps {
 
 export interface SyncSummary {
   status: "SYNCED" | "SKIPPED" | "CURSOR_MOVED";
-  reason?: "SOURCE_NOT_FOUND" | "SOURCE_DISABLED" | "CONNECTION_INACTIVE";
+  reason?: "SOURCE_NOT_FOUND" | "SOURCE_DISABLED" | "CONNECTION_INACTIVE" | "SOURCE_UNAVAILABLE";
   pages: number;
   events: number;
   messagesCreated: number;
@@ -33,11 +33,15 @@ export interface SyncSummary {
 
 const TX_TIMEOUT_MS = 30_000;
 
-/** Providers without credentials come from the integrations registry; Gmail is built for its connection from stored credentials. */
+/** Providers without credentials come from the integrations registry; Gmail is built for its connection from stored credentials; Chat reads as the product's one Chat app. */
 const defaultAdapterFor: AdapterRegistry = (provider, context) => {
   if (provider === "GMAIL") {
     if (!context) throw new Error("A Gmail adapter needs its connection");
     return gmailAdapterFor(context);
+  }
+  if (provider === "GOOGLE_CHAT") {
+    if (!context) throw new Error("A Chat adapter needs its connection");
+    return chatAdapterFor(context);
   }
   return getAdapter(provider);
 };

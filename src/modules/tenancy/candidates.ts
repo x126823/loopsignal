@@ -37,3 +37,16 @@ export async function listTeamActors(organizationId: string, teamId: string, opt
     return [...new Set([...memberships.map((m) => m.userId), ...admins.map((a) => a.userId)])].sort();
   });
 }
+
+export interface OrgUser { id: string; name: string }
+
+/**
+ * Everyone who can own work in the organization (not viewers or auditors), by display name only (no email), for an admin choosing
+ * which LoopSignal user a Chat person is. The caller authorizes; this lists names.
+ */
+export async function listOrganizationUsers(organizationId: string): Promise<OrgUser[]> {
+  return withTenant({ organizationId }, async (tx) => {
+    const members = await tx.membership.findMany({ where: { role: { in: ["MEMBER", "TEAM_LEAD", "ORG_ADMIN"] } }, include: { user: true } });
+    return members.map((m) => ({ id: m.userId, name: m.user.name ?? m.user.email.split("@")[0] ?? m.userId })).sort((a, b) => a.name.localeCompare(b.name));
+  });
+}
