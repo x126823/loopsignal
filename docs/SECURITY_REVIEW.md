@@ -37,6 +37,8 @@ A review of the implementation against `docs/SECURITY.md`: for each threat, wher
 | F8 | The review queue page rendered every open task (3 s at 1,200) | Medium (availability) | Bounded to 100 with an honest total, visibility decided before the cut so counts never reveal other teams' work |
 | F9 | A backup had never been restored, and nothing checked that a restore keeps RLS, grants, guards and the audit chain | High | `npm run drill:restore` and its tests, run in CI |
 | F10 | No tooling for dead letters during an incident | Low | `npm run ops:dead-letters` (list, retry), tested |
+| F11 | **The web server did not refuse to start on a bad production configuration.** Settings were validated on first use, so a deploy with a missing `AUTH_URL` or dev login on started, then answered every request with a 500. (The production checklist claimed otherwise.) Found by the production rehearsal. | Medium | A start-up hook validates the environment and exits, naming the setting (never the value); the worker already did. Guarded by `tests/lint-boot.test.ts` and checked for real by the rehearsal |
+| F12 | The restore drill's append-only check proved nothing on an empty table (a statement that changes no rows is not "rejected") | Low | It now inserts its own row into the restored copy to test raw events, tests the other tables only where rows exist, and checks the guard triggers are present and enabled directly |
 
 ## 3. Known gaps (not fixed; each is stated, not hidden)
 
@@ -61,5 +63,6 @@ npm run lint && npm run typecheck && npm test && npm run test:e2e
 npm audit --omit=dev --audit-level=high
 npm run scan:secrets
 npm run drill:restore
+npm run build && npm run rehearse:production   # the production checklist, executed (30 checks)
 npm run load:test -- --assert            # needs a running dev server; see docs/runbooks/load-test.md
 ```

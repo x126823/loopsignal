@@ -53,3 +53,5 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Production rehearsal (build, boot web and worker in production mode, check the production checklist)
+        run: npm run build && npm run rehearse:production

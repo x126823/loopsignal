@@ -321,6 +321,8 @@ Runbooks: `docs/runbooks/`. Review and findings: `docs/SECURITY_REVIEW.md`.
 
 **Browser-side defenses.** `src/proxy.ts` applies a nonce-based Content Security Policy to every request (strict in production; development relaxes only `unsafe-eval`, hot-reload sockets and the style nonce), and `next.config.ts` adds the static headers. Authorization is never decided in the proxy: every page and server action resolves the caller itself, and a structural test fails if an action does not.
 
+**Start-up validation.** `src/instrumentation.ts` validates the whole environment before the web server accepts a request and exits on a bad configuration, naming the invalid settings (never values); the worker validates at start too. `npm run rehearse:production` boots both in production mode against a throwaway database and checks the production checklist.
+
 **Authentication in production.** `AUTH_URL` is required and pins the host Auth.js trusts. (Setting `trustHost: false` explicitly, as the code did before, makes every production sign-in fail.)
 
 **Capacity and the database pool.** `DB_POOL_MAX` (20) and `DB_TX_MAX_WAIT_MS` (10 s) are configurable. List pages are bounded (the review queue shows the oldest 100 with an honest total that counts only what the viewer may see). Measured numbers are in `docs/runbooks/load-test.md`.
