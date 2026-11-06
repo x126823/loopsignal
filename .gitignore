@@ -14,3 +14,8 @@ next-env.d.ts
 npm-debug.log*
 
 /generated/prisma
+
+# Generated secrets files must never be committed (npm run ops:generate-secrets refuses to write inside the repo; this is a second wall)
+secrets.env
+**/secrets.env
+*.secrets.env

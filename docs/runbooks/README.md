@@ -4,7 +4,9 @@ Operating LoopSignal. Each runbook is written to be followed under stress: what 
 
 | Runbook | Use it when |
 |---|---|
-| [Production checklist](production-checklist.md) | Standing up or reviewing a deployment |
+| [Running on your Mac with real data](local-mac.md) | One person, their own Gmail, offline analysis, on one Mac: the safe local setup, Google steps, backups, and how to remove it |
+| [First deployment](first-deployment.md) | Standing up an environment for the first time, step by step, in order |
+| [Production checklist](production-checklist.md) | What must be true of a deployment; reviewing one |
 | [Incident response](incident-response.md) | Anything that might be a security or data incident; the containment switches |
 | [Key rotation](key-rotation.md) | Rotating `FIELD_ENCRYPTION_KEY`, `AUTH_SECRET`, Google client or Chat app credentials, or after a suspected leak |
 | [Backup and restore](backup-restore.md) | Taking backups, proving they restore, or restoring for real |

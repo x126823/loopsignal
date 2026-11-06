@@ -2,21 +2,21 @@
 
 Nothing in this repository has been run against real data or a real deployment. This is the list of things that must be true before it is, taken from what Sprint 13 found. Tick each one for the environment you are standing up.
 
-**Rehearse it first.** `npm run build && npm run rehearse:production` runs everything on this list that does not depend on your environment, for real: a database built from zero, the actual web and worker processes in production mode, refusal of every bad configuration, security headers, sign-in and role checks, schedules, a retention pass and the restore drill, each reported PASS or FAIL (32 checks; it runs in CI too). It cannot check the items marked *yours* below; it prints them at the end.
+**Rehearse it first.** `npm run build && npm run rehearse:production` runs everything on this list that does not depend on your environment, for real: a database built from zero, the actual web and worker processes in production mode, refusal of every bad configuration, security headers, sign-in and role checks, schedules, a retention pass and the restore drill, each reported PASS or FAIL (35 checks; it runs in CI too). It cannot check the items marked *yours* below; it prints them at the end.
 
 ## Configuration (the web server and the worker both exit at start-up, naming the setting, if any of the first four are wrong)
 
 - [ ] `NODE_ENV=production`.
 - [ ] `AUTH_URL` is the public **https** URL (http is accepted only for localhost). It pins the host Auth.js trusts; without it nobody can sign in. *(Sprint 13 fixed a bug that made every production sign-in fail with `UntrustedHost`, even with this set.)*
 - [ ] `AUTH_DEV_LOGIN` is `false` (production refuses `true`).
-- [ ] `AUTH_SECRET` and `FIELD_ENCRYPTION_KEY` are long random values from a secret store, different per environment, and **backed up separately from the database** (a database backup without the field key is unreadable by design).
+- [ ] `AUTH_SECRET` and `FIELD_ENCRYPTION_KEY` are long random values from a secret store (generate them with `npm run ops:generate-secrets`), different per environment, and `FIELD_ENCRYPTION_KEY` is **backed up separately from the database**. Production refuses the published development key, the development session secrets and the development database passwords at start-up (a database backup without the field key is unreadable by design).
 - [ ] `GMAIL_ENABLED` / `GOOGLE_CHAT_ENABLED` are `false` until the user has authorized real data, a Google Cloud project is verified for the restricted scopes, and the connection runbook has been read. `GOOGLE_TEST_BASE_URL` must not be set (production refuses it).
 - [ ] `LLM_PROVIDER` is what you intend; `fake` never contacts a model. Review the provider's data-retention terms first (SECURITY.md).
 
 ## Database
 
 - [ ] The migration role can create roles (the Sprint 13 migration creates `loopsignal_maint`) and bypasses row-level security. The scan and maintenance functions run with the owner's rights and return nothing if it cannot bypass RLS.
-- [ ] `loopsignal_app` is provisioned out of band: non-superuser, non-owner, `NOBYPASSRLS`, with the per-table grants the migrations give it. The application connects only as this role.
+- [ ] `loopsignal_app` is created **before the migrations run** (they grant to it and assume it exists; only the development Docker setup creates it for you, with a published password), with its own strong password, and provisioned out of band: non-superuser, non-owner, `NOBYPASSRLS`, with the per-table grants the migrations give it. The application connects only as this role.
 - [ ] `loopsignal_maint` exists, `NOLOGIN`. Nothing may ever log in as it.
 - [ ] `DB_POOL_MAX` (default 20) times the number of web and worker processes stays under Postgres `max_connections` with headroom for migrations and backups.
 - [ ] Backups run and the restore drill passes ([Backup and restore](backup-restore.md)).

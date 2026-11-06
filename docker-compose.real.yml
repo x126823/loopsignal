@@ -1,0 +1,49 @@
+# The REAL-DATA stack for running LoopSignal on one machine (see docs/runbooks/local-mac.md). It is separate from docker-compose.yml, which is for
+# development with synthetic data and publishes databases with published passwords.
+#
+# Differences that matter:
+#  - every port is bound to 127.0.0.1, so nothing here is reachable from your network;
+#  - every password comes from your env file (`npm run local:init` writes it with random values); there are no defaults and no published passwords;
+#  - its own project name and its own volumes, so it can never touch the development database.
+# Use it through the npm scripts (npm run real:up), which pass the env file for you.
+name: loopsignal-real
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?run npm run local:init first, then use npm run real:up}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run npm run local:init first}
+      POSTGRES_DB: loopsignal
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?run npm run local:init first}
+    ports:
+      - "127.0.0.1:${REAL_PG_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-real/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d loopsignal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run npm run local:init first}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    ports:
+      - "127.0.0.1:${REAL_REDIS_PORT:-6380}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
