@@ -51,8 +51,8 @@ beforeEach(() => {
 });
 
 /** Request a claim, add the app to the space, post the code there. */
-async function claim(p: Principal = admin(), space = newSpace(), team = f.teamId) {
-  const started = await sources.startSpaceClaim(p, { space, teamId: team });
+async function claim(p: Principal = admin(), space = newSpace(), team = f.teamId, deps: import("@/modules/sources").ChatDeps = {}) {
+  const started = await sources.startSpaceClaim(p, { space, teamId: team }, deps);
   return { ...started, space };
 }
 async function bind(p: Principal = admin(), space = newSpace(), org = f) {
@@ -207,6 +207,52 @@ describe("one space, one organization", () => {
     expect(out.outcome).toBe("VERIFIED");
   });
 
+  it("keeps the first organization's place: a later proof is refused while the earlier request is open, and allowed once it has expired", async () => {
+    const space = newSpace();
+    fake.addChatSpace(space, true);
+    const first = await claim(admin(), space); // asked first (say, before adding the Chat app)
+    const later = await claim(other.principals.admin, space, other.teamId);
+    fake.addChatMessage(space, { text: later.code });
+    expect(await sources.verifySpaceClaim(other.principals.admin, later.claimId)).toEqual({ outcome: "CLAIMED_EARLIER" });
+    expect(await owner.monitoredSource.count({ where: { organizationId: other.organizationId, externalId: space } })).toBe(0);
+    // The earlier requester is not blocked by the later one, and once it has bound the space the later one stays refused (now as bound).
+    fake.addChatMessage(space, { text: first.code });
+    expect((await sources.verifySpaceClaim(admin(), first.claimId)).outcome).toBe("VERIFIED");
+    expect(await sources.verifySpaceClaim(other.principals.admin, later.claimId)).toEqual({ outcome: "ALREADY_BOUND" });
+  });
+
+  it("an expired, superseded or already-used earlier request no longer holds a place", async () => {
+    const expired = newSpace();
+    fake.addChatSpace(expired, true);
+    await claim(admin(), expired);
+    const second = await claim(other.principals.admin, expired, other.teamId);
+    fake.addChatMessage(expired, { text: second.code });
+    const inTwoDays = { now: () => new Date(Date.now() + 48 * 3_600_000) };
+    expect(await sources.verifySpaceClaim(other.principals.admin, second.claimId, inTwoDays)).toEqual({ outcome: "EXPIRED" }); // its own request has lapsed too
+    const fresh = await claim(other.principals.admin, expired, other.teamId, inTwoDays); // a new request, made when the first one has long expired
+    fake.addChatMessage(expired, { text: fresh.code });
+    expect((await sources.verifySpaceClaim(other.principals.admin, fresh.claimId, inTwoDays)).outcome).toBe("VERIFIED");
+
+    const superseded = newSpace();
+    fake.addChatSpace(superseded, true);
+    await claim(admin(), superseded);
+    await claim(admin(), superseded); // asking again supersedes the earlier request: still only one open claim for this organization
+    const theirs = await claim(other.principals.admin, superseded, other.teamId);
+    fake.addChatMessage(superseded, { text: theirs.code });
+    expect((await sources.verifySpaceClaim(other.principals.admin, theirs.claimId)).outcome).toBe("CLAIMED_EARLIER"); // the replacement is still earlier than theirs
+  });
+
+  it("an organization's own earlier request never blocks it, and the order is decided by who asked first", async () => {
+    const space = newSpace();
+    fake.addChatSpace(space, true);
+    const theirsFirst = await claim(other.principals.admin, space, other.teamId);
+    const mine = await claim(admin(), space);
+    fake.addChatMessage(space, { text: mine.code });
+    expect(await sources.verifySpaceClaim(admin(), mine.claimId)).toEqual({ outcome: "CLAIMED_EARLIER" }); // they asked first
+    fake.addChatMessage(space, { text: theirsFirst.code });
+    expect((await sources.verifySpaceClaim(other.principals.admin, theirsFirst.claimId)).outcome).toBe("VERIFIED");
+  });
+
   it("lets exactly one of two organizations win when both prove the same space at the same moment", async () => {
     const space = newSpace();
     fake.addChatSpace(space, true);
@@ -215,7 +261,10 @@ describe("one space, one organization", () => {
     fake.addChatMessage(space, { text: a.code });
     fake.addChatMessage(space, { text: b.code });
     const results = await Promise.all([sources.verifySpaceClaim(admin(), a.claimId), sources.verifySpaceClaim(other.principals.admin, b.claimId)]);
-    expect(results.map((r) => r.outcome).sort()).toEqual(["ALREADY_BOUND", "VERIFIED"]);
+    // The one that asked first wins however the proofs race. The loser is told "already connected" if the winner got there first, or "asked
+    // earlier" if the loser's proof happened to run first: either way exactly one organization holds the space.
+    expect(results[0]!.outcome).toBe("VERIFIED");
+    expect(["ALREADY_BOUND", "CLAIMED_EARLIER"]).toContain(results[1]!.outcome);
     expect(await owner.monitoredSource.count({ where: { externalId: space, enabled: true, connection: { provider: "GOOGLE_CHAT" } } })).toBe(1);
   });
 

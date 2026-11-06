@@ -13,7 +13,8 @@ All of these are reversible and none deletes data.
 | `GOOGLE_CHAT_ENABLED=false` | Same for Chat | Environment, restart |
 | `LLM_PROVIDER=fake` | No message content is sent to a model | Environment, restart worker |
 | `MAINTENANCE_JOBS_ENABLED=false` | Stops the daily retention pass and audit verification schedules (use it to **preserve evidence**, so nothing is purged while you investigate) | Environment, restart worker. Running `ops:retention` by hand still works |
-| Rotate `AUTH_SECRET` | Signs everyone out (all sessions become invalid) | [Key rotation](key-rotation.md) |
+| Sign someone out everywhere | Ends every session of one person, on every device (they sign in again). A member can do it for themselves; an administrator for any member | **Security** page. Audited (`session.revoked`, `session.revoked_self`) |
+| Rotate `AUTH_SECRET` | Signs **everyone** out (all sessions become invalid) | [Key rotation](key-rotation.md) |
 | Rotate the Google client secret / Chat key | Cuts off a leaked app credential | [Key rotation](key-rotation.md) |
 
 ## Triage
@@ -36,8 +37,8 @@ All of these are reversible and none deletes data.
 
 Things this project does **not** do yet, so you do not assume they exist:
 
-- No paging or alerting integration: errors are logged, not delivered.
-- No automatic notification when a connection needs attention (the Connections page shows it).
-- Secret scanning covers committed files (`npm run scan:secrets`, in CI), not history or other places secrets can live.
+- Alerting is a webhook you configure ([Alerting](alerting.md)); the paging behind it is yours, and a down webhook is only visible in the log.
+- A connection that needs attention raises an alert (if the webhook is set) and shows on the Connections page; there is no in-app notification.
+- Secret scanning covers committed files and git history (`npm run scan:secrets`, `-- --history`, both in CI), not other places secrets can live. A secret found in history must be rotated even if it was later removed.
 - Backups are proven locally by a drill; scheduling, off-site copies and retention of backups are an environment concern.
 - The Pub/Sub push endpoint and Google Chat's behaviour against a real domain have not been exercised.

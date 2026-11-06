@@ -142,4 +142,33 @@ describe("parseEnv", () => {
       expect(parseEnv({ ...prod, AUTH_URL: "http://localhost:3000" }).AUTH_URL).toBe("http://localhost:3000");
     });
   });
+
+  describe("alert webhook settings", () => {
+    it("are off by default, and an empty value from a copied .env.example is unset", () => {
+      const env = parseEnv({ ...valid, ALERT_WEBHOOK_URL: "", ALERT_WEBHOOK_SECRET: "" });
+      expect([env.ALERT_WEBHOOK_URL, env.ALERT_WEBHOOK_SECRET, env.ALERT_DEDUPE_MINUTES]).toEqual([undefined, undefined, 60]);
+    });
+
+    it("require https for a real host, allowing http only for localhost", () => {
+      expect(parseEnv({ ...valid, ALERT_WEBHOOK_URL: "https://hooks.example.com/x" }).ALERT_WEBHOOK_URL).toBe("https://hooks.example.com/x");
+      expect(parseEnv({ ...valid, ALERT_WEBHOOK_URL: "http://localhost:9000/hook" }).ALERT_WEBHOOK_URL).toBe("http://localhost:9000/hook");
+      for (const bad of ["http://hooks.example.com/x", "http://localhost.evil.example/x", "ftp://x.example.com", "not a url"]) {
+        expect(() => parseEnv({ ...valid, ALERT_WEBHOOK_URL: bad }), bad).toThrow(/ALERT_WEBHOOK_URL/);
+      }
+    });
+
+    it("require a signing secret of reasonable length and bound the repeat window", () => {
+      expect(() => parseEnv({ ...valid, ALERT_WEBHOOK_SECRET: "short" })).toThrow(/ALERT_WEBHOOK_SECRET/);
+      expect(parseEnv({ ...valid, ALERT_WEBHOOK_SECRET: "x".repeat(16), ALERT_DEDUPE_MINUTES: "5" })).toMatchObject({ ALERT_DEDUPE_MINUTES: 5 });
+      for (const bad of ["0", "1441", "x"]) expect(() => parseEnv({ ...valid, ALERT_DEDUPE_MINUTES: bad }), bad).toThrow(/ALERT_DEDUPE_MINUTES/);
+    });
+  });
+
+  describe("session lifetime", () => {
+    it("defaults to 12 hours and is bounded between an hour and a week", () => {
+      expect(parseEnv(valid).SESSION_HOURS).toBe(12);
+      expect(parseEnv({ ...valid, SESSION_HOURS: "168" }).SESSION_HOURS).toBe(168);
+      for (const bad of ["0", "169", "x", "1.5"]) expect(() => parseEnv({ ...valid, SESSION_HOURS: bad }), bad).toThrow(/SESSION_HOURS/);
+    });
+  });
 });

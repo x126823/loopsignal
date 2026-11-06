@@ -35,7 +35,9 @@ function buildProviders(): Provider[] {
 
 export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   providers: buildProviders(),
-  session: { strategy: "jwt" as const },
+  // A sign-in lasts SESSION_HOURS from the moment of sign-in. (JWT sessions are not extended by server-rendered requests, so this is a hard
+  // limit, not an idle timeout.) A person or an administrator can also end every session early: see sessions.ts.
+  session: { strategy: "jwt" as const, maxAge: getEnv().SESSION_HOURS * 3600 },
   pages: { signIn: "/login", error: "/login" }, // our own sign-in page (it also shows sign-in errors)
   secret: getEnv().AUTH_SECRET,
   // Development trusts the request host. Production must NOT: left unset, Auth.js trusts the host only when AUTH_URL pins it, and the env
@@ -65,6 +67,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
     /** The session carries identity only. Org and role are resolved server-side via resolvePrincipal. */
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
+      (session as unknown as { issuedAt?: number }).issuedAt = typeof token.iat === "number" ? token.iat : undefined; // lets the app tell whether the session predates a revocation
       return session;
     },
   },

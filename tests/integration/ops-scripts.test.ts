@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPrismaClient } from "@/lib/db";
@@ -70,4 +73,36 @@ describe("ops:erase-person", () => {
     expect(await owner.participant.findUniqueOrThrow({ where: { organizationId_id: { organizationId: f.organizationId, id: participantId } } })).toMatchObject({ displayName: null, address: `erased:${participantId}` });
     expect(await owner.auditLog.findFirstOrThrow({ where: { organizationId: f.organizationId, action: "participant.erased" } })).toMatchObject({ actorId: f.users.admin, actorType: "USER" });
   }, 60_000);
+});
+
+describe("ops:export-person", () => {
+  it("writes the person's data to a new file only its owner can read, refuses to overwrite, and prints counts but no content", async () => {
+    const g = await createEngineFixture(owner);
+    const thread = await owner.thread.create({ data: { organizationId: g.organizationId, provider: "SYNTHETIC", externalThreadId: `t-${randomUUID()}` } });
+    const person = await owner.participant.create({ data: { organizationId: g.organizationId, address: "users/export-script", displayName: "Export Script Person" } });
+    await owner.message.create({ data: { organizationId: g.organizationId, monitoredSourceId: g.sourceId, threadId: thread.id, provider: "SYNTHETIC", externalMessageId: `m-${randomUUID()}`, senderParticipantId: person.id, sentAt: new Date(), subject: "Hello", bodyText: encryptField("A very private sentence for the export test.", testKey, `${g.organizationId}:Message.bodyText`), bodyHash: "h", direction: "INBOUND" } });
+    const dir = mkdtempSync(join(tmpdir(), "loopsignal-export-"));
+    const file = join(dir, "person.json");
+    try {
+      const args = ["--org", g.organizationId, "--participant", person.id, "--as", g.users.admin, "--out", file];
+      expect(run("scripts/export-person.ts", [...args.slice(0, 6)]).code).toBe(1); // no --out
+      expect(run("scripts/export-person.ts", ["--org", g.organizationId, "--participant", person.id, "--as", g.users.member, "--out", file]).err).toContain("administrator");
+      const r = run("scripts/export-person.ts", args);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('"event":"export.done"');
+      expect(r.out).not.toMatch(/private sentence|Export Script Person|export-script/);
+      expect(statSync(file).mode & 0o777).toBe(0o600); // owner only
+      const data = JSON.parse(readFileSync(file, "utf8")) as { messages: Array<{ body: string }>; participant: { displayName: string } };
+      expect(data.messages.map((m) => m.body)).toEqual(["A very private sentence for the export test."]);
+      expect(data.participant.displayName).toBe("Export Script Person");
+      writeFileSync(file, "precious");
+      expect(run("scripts/export-person.ts", args).code).toBe(1); // never overwrites
+      expect(readFileSync(file, "utf8")).toBe("precious");
+      expect(run("scripts/export-person.ts", ["--org", g.organizationId, "--participant", randomUUID(), "--as", g.users.admin, "--out", join(dir, "none.json")]).err).toContain("No such participant");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      await purgeOrgs(owner, [g.organizationId]);
+      await owner.user.deleteMany({ where: { id: { in: Object.values(g.users) } } });
+    }
+  }, 120_000);
 });

@@ -1,5 +1,6 @@
 import { DelayedError, Queue, UnrecoverableError, Worker, type Job, type JobsOptions, type Processor, type WorkerOptions } from "bullmq";
 import { getEnv } from "../env";
+import { raiseAlert } from "../alerts";
 import { log } from "../log";
 import { redisConnection } from "./connection";
 import { JOB_SCHEMAS, type DeadLetterRecord, type QueueName } from "./jobs";
@@ -64,7 +65,10 @@ export class QueueHub {
       ...opts,
     });
     this.attachDeadLetter(name, worker);
-    worker.on("error", (err) => log("error", "worker.error", { queue: name, errorName: err.name }));
+    worker.on("error", (err) => {
+      log("error", "worker.error", { queue: name, errorName: err.name });
+      void raiseAlert("worker.error", { queue: name, errorName: err.name });
+    });
     return worker;
   }
 
@@ -86,7 +90,10 @@ export class QueueHub {
       };
       void this.queue(deadLetterName(name))
         .add("dead", record, { jobId: `dead-${job.id ?? "unknown"}`, removeOnComplete: false, removeOnFail: false })
-        .then(() => log("warn", "job.dead_lettered", { queue: name, jobId: job.id ?? null, errorName: err.name, attemptsMade: job.attemptsMade }))
+        .then(() => {
+          log("warn", "job.dead_lettered", { queue: name, jobId: job.id ?? null, errorName: err.name, attemptsMade: job.attemptsMade });
+          void raiseAlert("job.dead_lettered", { queue: name, errorName: err.name });
+        })
         .catch((e: Error) => log("error", "job.dead_letter_failed", { queue: name, errorName: e.name }));
     });
   }

@@ -35,6 +35,8 @@ model User {
   email       String       @unique
   name        String?
   createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  /// Sessions issued before this moment are no longer valid ("sign out everywhere"). Null: none revoked.
+  sessionsValidAfter DateTime? @db.Timestamptz(3)
   memberships Membership[]
   teamMembers TeamMember[]
 }

@@ -113,6 +113,13 @@ async function main(): Promise<void> {
     const adminRetention = await page("/settings/retention", "admin");
     const memberRetention = await page("/settings/retention", "member");
     check(adminRetention.status === 200 && adminRetention.text.includes("Raw provider payloads") && memberRetention.status === 200 && memberRetention.text.includes("Only organization admins") && !memberRetention.text.includes("Raw provider payloads"), "an admin signs in and manages retention; a member is refused", "sessions minted from this run's own AUTH_SECRET");
+    const adminSec = await page("/settings/security", "admin");
+    const memberSec = await page("/settings/security", "member");
+    check(adminSec.status === 200 && adminSec.text.includes("Members") && memberSec.status === 200 && memberSec.text.includes("Sign out everywhere") && !memberSec.text.includes("member-row"), "everyone can end their own sessions; only an admin sees the member list");
+    await db.query(`UPDATE "User" SET "sessionsValidAfter" = now() + interval '1 minute' WHERE id = $1`, [fx.users!["member"]]);
+    const revoked = await fetch(`http://localhost:${WEB_PORT}/approvals`, { headers: { cookie: await cookie("member") }, redirect: "manual" });
+    check(revoked.status === 307 && (revoked.headers.get("location") ?? "").includes("/login"), "a session issued before sign-out-everywhere is refused", "checked on a production build");
+    await db.query(`UPDATE "User" SET "sessionsValidAfter" = NULL WHERE id = $1`, [fx.users!["member"]]);
     const adminConn = await page("/settings/connections", "admin");
     check(adminConn.status === 200 && adminConn.text.includes("No connections are turned on"), "Connections says every integration is off by default");
     const pagesOk = (await Promise.all(["/approvals", "/items", "/dashboard", "/review", "/notifications"].map((p) => page(p, "admin")))).every((x) => x.status === 200);

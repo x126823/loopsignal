@@ -2,7 +2,7 @@
 
 Nothing in this repository has been run against real data or a real deployment. This is the list of things that must be true before it is, taken from what Sprint 13 found. Tick each one for the environment you are standing up.
 
-**Rehearse it first.** `npm run build && npm run rehearse:production` runs everything on this list that does not depend on your environment, for real: a database built from zero, the actual web and worker processes in production mode, refusal of every bad configuration, security headers, sign-in and role checks, schedules, a retention pass and the restore drill, each reported PASS or FAIL (30 checks; it runs in CI too). It cannot check the items marked *yours* below; it prints them at the end.
+**Rehearse it first.** `npm run build && npm run rehearse:production` runs everything on this list that does not depend on your environment, for real: a database built from zero, the actual web and worker processes in production mode, refusal of every bad configuration, security headers, sign-in and role checks, schedules, a retention pass and the restore drill, each reported PASS or FAIL (32 checks; it runs in CI too). It cannot check the items marked *yours* below; it prints them at the end.
 
 ## Configuration (the web server and the worker both exit at start-up, naming the setting, if any of the first four are wrong)
 
@@ -24,7 +24,10 @@ Nothing in this repository has been run against real data or a real deployment. 
 ## Workers
 
 - [ ] `npm run worker` is running (ingestion, analysis, SLA scan, correlation follow-up, retention, audit verification, and the Gmail/Chat scans when enabled). Exactly the schedules you expect exist: `MAINTENANCE_JOBS_ENABLED` is `true`.
-- [ ] Alerting exists for log events at **error** level: `audit.chain_broken`, `audit.verify_failed`, `gmail.watch_renewal_failed`, `chat.app_credentials_rejected`, `retention.failed`, `worker.error`, `job.dead_lettered` (warn). The application logs them; nothing in this repository pages anyone.
+- [ ] `ALERT_WEBHOOK_URL` is set to a receiver that actually pages someone, `ALERT_WEBHOOK_SECRET` is set and verified by the receiver, and `npm run ops:test-alert` reached a human ([Alerting](alerting.md)). Alerts cover the events that need a person; keep log-based alerting for the rest.
+- [ ] Audit anchors are on (`AUDIT_ANCHOR_KEY` held apart from the database, `AUDIT_ANCHOR_FILE` on storage the database host cannot rewrite, or the `audit.anchor` log line shipped to a write-once store), so deleted newest audit rows are detectable ([Audit log integrity](audit-chain.md)).
+- [ ] `SESSION_HOURS` (default 12) suits you: a sign-in lasts that long from the moment of sign-in, and people can end sessions early under Security.
+- [ ] Log events at **error** level are also watched: `audit.chain_broken`, `audit.verify_failed`, `gmail.watch_renewal_failed`, `chat.app_credentials_rejected`, `retention.failed`, `worker.error`, `job.dead_lettered` (warn). The application logs them; nothing in this repository pages anyone.
 
 ## Verify after deploy
 

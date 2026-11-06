@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { raiseAlert } from "@/lib/alerts";
 import { decryptField, encryptField } from "@/lib/crypto/fields";
 import { withTenant, type TenantTx } from "@/lib/db";
 import { recordAudit } from "@/modules/audit";
@@ -73,12 +74,15 @@ export class ConnectionAuthFailedError extends Error {
 
 /** Google refused the credentials for good: stop syncing this connection, and leave an audit trail. Idempotent. */
 export async function markConnectionAuthFailed(organizationId: string, connectionId: string, reason: string): Promise<void> {
+  let failedNow = false;
   await withTenant({ organizationId }, async (tx) => {
     const { count } = await tx.sourceConnection.updateMany({ where: { id: connectionId, status: "ACTIVE" }, data: { status: "ERROR" } });
     if (count === 1) {
       await recordAudit(tx, { organizationId, actorType: "SYSTEM", action: "connection.auth_failed", entityType: "SourceConnection", entityId: connectionId, metadata: { reason } });
+      failedNow = true;
     }
   });
+  if (failedNow) void raiseAlert("connection.needs_attention", { organizationId, connectionId, reason }); // once: only the transition to ERROR
 }
 
 /**

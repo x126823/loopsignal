@@ -63,6 +63,19 @@ export async function verifyAuditChain(tx: TenantTx, organizationId: string): Pr
   return bad === null ? { intact: true } : { intact: false, firstBadSeq: Number(bad) };
 }
 
+export interface AuditHead { seq: bigint; hash: string }
+
+/** The newest audit row of the organization in the transaction's context, or null if there is none. */
+export async function auditHead(tx: TenantTx): Promise<AuditHead | null> {
+  const row = await tx.auditLog.findFirst({ orderBy: { seq: "desc" }, select: { seq: true, hash: true } });
+  return row ? { seq: row.seq, hash: row.hash } : null;
+}
+
+/** The hash of the audit row with this sequence number, or null if there is no such row. */
+export async function auditHashAt(tx: TenantTx, seq: bigint): Promise<string | null> {
+  return (await tx.auditLog.findFirst({ where: { seq }, select: { hash: true } }))?.hash ?? null;
+}
+
 export interface AuditSummary { at: Date; metadata: Record<string, unknown> }
 
 /** The most recent audit entry with this action, for status screens. Read-only. The transaction must carry the organization. */

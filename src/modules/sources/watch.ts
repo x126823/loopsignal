@@ -1,3 +1,4 @@
+import { raiseAlert } from "@/lib/alerts";
 import { withTenant } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { log } from "@/lib/log";
@@ -41,6 +42,7 @@ export async function renewDueWatches(organizationId: string, deps: SourcesDeps 
       summary.failed++;
       if (e instanceof ProviderAuthError) await markConnectionAuthFailed(organizationId, c.connectionId, e.code);
       log("error", "gmail.watch_renewal_failed", { organizationId, connectionId: c.connectionId, errorName: e instanceof Error ? e.name : "unknown" });
+      void raiseAlert("gmail.watch_renewal_failed", { organizationId, connectionId: c.connectionId, errorName: e instanceof Error ? e.name : "unknown" });
     }
   }
   return summary;

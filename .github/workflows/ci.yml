@@ -28,6 +28,8 @@ jobs:
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the history secret scan needs every commit
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -35,8 +37,11 @@ jobs:
       - run: npm ci
       - name: Dependency audit (production dependencies, high severity and above)
         run: npm audit --omit=dev --audit-level=high
-      - name: Secret scan (files git tracks)
-        run: npm run scan:secrets
+      - name: Dependency audit report (all severities, production dependencies; informational)
+        run: npm audit --omit=dev
+        continue-on-error: true
+      - name: Secret scan (files git tracks, and every line ever added)
+        run: npm run scan:secrets && npm run scan:secrets -- --history
       - name: Postgres client tools (pg_dump and pg_restore, for the restore drill and its tests)
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Create runtime DB role

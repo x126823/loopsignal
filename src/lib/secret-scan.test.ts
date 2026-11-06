@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { scanPaths, scanText } from "./secret-scan";
+import { scanHistoryLog, scanPaths, scanText } from "./secret-scan";
 
 // The "secrets" below are assembled at run time so that this file itself contains none of them.
 const j = (...p: string[]) => p.join("");
@@ -50,5 +50,43 @@ describe("secret scanner", () => {
       try { return scanText(p, readFileSync(p, "utf8")); } catch { return []; }
     });
     expect(hits).toEqual([]);
+  });
+
+  describe("history", () => {
+    const secret = `${j("GOC", "SPX-")}${"a1B2c3D4e5".repeat(3)}`;
+    const log = [
+      "@@COMMIT 1111111111111111", "diff --git a/src/config.ts b/src/config.ts", "--- a/src/config.ts", "+++ b/src/config.ts", "@@ -0,0 +1,2 @@", `+const secret = "${secret}";`, "+const ok = 1;",
+      "@@COMMIT 2222222222222222", "diff --git a/src/config.ts b/src/config.ts", "--- a/src/config.ts", "+++ b/src/config.ts", "@@ -1,2 +0,0 @@", `-const secret = "${secret}";`, "-const ok = 1;",
+      "@@COMMIT 3333333333333333", "diff --git a/README.md b/README.md", "--- a/README.md", "+++ b/README.md", "@@ -1 +1 @@", " context only", "+nothing to see here",
+    ].join("\n");
+
+    it("finds a secret that was added and later removed, naming the commit and file but not the value", () => {
+      const found = scanHistoryLog(log);
+      expect(found).toEqual([{ path: "src/config.ts", line: 1, kind: "Google OAuth client secret", commit: "111111111111" }]);
+      expect(JSON.stringify(found)).not.toContain("a1B2c3D4e5");
+    });
+
+    it("looks only at added lines, so removing a secret is not reported as adding one", () => {
+      expect(scanHistoryLog(log).map((f) => f.commit)).toEqual(["111111111111"]); // not 2222: that commit only removed it
+    });
+
+    it("finds a key block spread over several added lines, and ignores the documented example keys", () => {
+      const key = [j("-----BEGIN ", "PRIVATE KEY-----"), ...body.match(/.{1,60}/g)!, j("-----END ", "PRIVATE KEY-----")].map((l) => `+${l}`).join("\n");
+      const l2 = `@@COMMIT abcdefabcdef1234\ndiff --git a/k.txt b/k.txt\n--- /dev/null\n+++ b/k.txt\n@@ -0,0 +1,9 @@\n${key}\n`;
+      expect(scanHistoryLog(l2).map((f) => f.kind)).toEqual(["private key"]);
+      expect(scanHistoryLog("@@COMMIT 9999999999999999\ndiff --git a/t.ts b/t.ts\n+++ b/t.ts\n+aws AKIAIOSFODNN7EXAMPLE\n")).toEqual([]);
+    });
+
+    it("an empty or malformed log yields nothing rather than failing", () => {
+      expect(scanHistoryLog("")).toEqual([]);
+      expect(scanHistoryLog("not a log at all")).toEqual([]);
+    });
+
+    it("the repository's own history contains none (the same check CI runs)", () => {
+      const history = execFileSync("git", ["log", "--all", "-p", "-U0", "--no-color", "--format=@@COMMIT %H"], { encoding: "utf8", maxBuffer: 1024 * 1024 * 1024 });
+      expect(scanHistoryLog(history)).toEqual([]);
+      const named = execFileSync("git", ["log", "--all", "--name-only", "--format="], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }).split("\n").filter(Boolean);
+      expect(scanPaths([...new Set(named)])).toEqual([]);
+    }, 60_000);
   });
 });

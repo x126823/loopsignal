@@ -62,6 +62,7 @@ test.describe.serial("data retention", () => {
     await page.reload();
     await expect(page.getByTestId("last-purge")).toContainText("1 raw payload, 1 message");
     await expect(page.getByTestId("last-verification")).toContainText("Audit log verified intact");
+    await expect(page.getByTestId("anchor-status")).toContainText("anchors are off"); // honest about what the daily check cannot see without an anchor key
     const [gone] = await sql<{ n: string }>(`select count(*) n from "Message" where "organizationId" = $1 and "contentPurgedAt" is not null`, [f.organizationId]);
     expect(Number(gone!.n)).toBe(1);
   });

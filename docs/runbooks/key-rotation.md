@@ -7,6 +7,8 @@ What each secret protects, how to rotate it, and how to know it worked. Rotate o
 | `FIELD_ENCRYPTION_KEY` | Message bodies, raw payloads, Gmail tokens, Chat claim codes | Offline re-encryption; downtime while it runs |
 | `AUTH_SECRET` | Session cookies, the OAuth `state` | Everyone is signed out; in-flight Gmail consent flows fail and can be restarted |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | The Gmail OAuth client | Rotate in Google Cloud, then update; existing connections keep working |
+| `AUDIT_ANCHOR_KEY` | The signature on audit anchors | Anchors signed with the old key stop verifying (counted `invalid`, never a false alarm): keep the old key until you have taken fresh anchors, and verify old anchor files with the old key |
+| `ALERT_WEBHOOK_SECRET` | The signature on alerts | Change it on the receiver and the sender together; alerts in between fail verification on the receiver |
 | `GOOGLE_CHAT_SERVICE_ACCOUNT_JSON` | The Chat app's identity | Add a new key in Google Cloud, deploy it, disable the old one |
 
 ## FIELD_ENCRYPTION_KEY (the one that needs care)
@@ -30,7 +32,7 @@ Measured: tested for bodies, raw payloads, tokens and claim codes, for resume af
 ## AUTH_SECRET
 
 1. Generate a new value (`openssl rand -base64 32`), update the secret store, restart the web process.
-2. Everyone must sign in again. Gmail consent flows started before the change fail with "could not be verified" and can be restarted.
+2. Everyone must sign in again. Gmail consent flows started before the change fail with "could not be verified" and can be restarted. (To end sessions for ONE person or a few, use **Security → Sign out everywhere** instead: a member can do it for themselves, an administrator for any member of their organization, and nobody else is signed out.)
 
 ## Google OAuth client secret (Gmail)
 

@@ -109,7 +109,7 @@ export async function verifyChatClaimAction(formData: FormData): Promise<void> {
     const out = await verifySpaceClaim(ctx.principal, parsed.data.claimId);
     key = {
       VERIFIED: "chat_bound", CODE_NOT_SEEN: "chat_code_not_seen", APP_NOT_IN_SPACE: "chat_app_not_in_space", EXPIRED: "chat_claim_expired",
-      NOT_PENDING: "chat_claim_gone", NOT_FOUND: "not_found", ALREADY_BOUND: "chat_already_bound",
+      NOT_PENDING: "chat_claim_gone", NOT_FOUND: "not_found", ALREADY_BOUND: "chat_already_bound", CLAIMED_EARLIER: "chat_claimed_earlier",
     }[out.outcome] as NoticeKey;
   } catch (e) {
     if (e instanceof ForbiddenError) key = "forbidden";
