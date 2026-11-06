@@ -25,6 +25,8 @@ export interface FetchPage {
   /** Where the next fetch resumes. Always set after a successful fetch, even at the end of the data. */
   nextCursor: string;
   hasMore: boolean;
+  /** The provider said the old cursor is no longer usable, so this page restarts from a bounded window (replays dedupe). */
+  notice?: "RESYNC";
 }
 
 export interface NormalizedMessage {
@@ -53,6 +55,38 @@ export class UnsupportedProviderError extends Error {
   }
 }
 
+/** Credentials were refused (revoked, expired for good, or missing a scope). Retrying cannot help; the connection needs a person. */
+export class ProviderAuthError extends Error {
+  constructor(readonly code: "invalid_grant" | "unauthorized" | "forbidden") {
+    super(`Provider rejected the credentials: ${code}`);
+    this.name = "ProviderAuthError";
+  }
+}
+
+/** Throttled, and still throttled after our own retries. Transient: the job retries later with backoff. */
+export class ProviderRateLimitError extends Error {
+  constructor() {
+    super("Provider is rate limiting requests");
+    this.name = "ProviderRateLimitError";
+  }
+}
+
+/** Any other provider failure. The message carries the status only, never a response body (bodies can hold content). */
+export class ProviderApiError extends Error {
+  constructor(readonly status: number) {
+    super(`Provider request failed with status ${status}`);
+    this.name = "ProviderApiError";
+  }
+}
+
+/** The stored cursor is too old or unreadable (Gmail: history gap). The adapter normally recovers by itself. */
+export class ProviderCursorExpiredError extends Error {
+  constructor() {
+    super("Provider cursor expired");
+    this.name = "ProviderCursorExpiredError";
+  }
+}
+
 export interface ProviderAdapter {
   readonly provider: Provider;
   /** Fetch up to `limit` events after `cursor` (null on the first sync). */
@@ -61,4 +95,10 @@ export interface ProviderAdapter {
   normalize(event: RawProviderEvent): NormalizedMessage;
 }
 
-export type AdapterRegistry = (provider: Provider) => ProviderAdapter;
+/** Which connection an adapter is for. Providers with credentials (Gmail) need it; the synthetic one ignores it. */
+export interface AdapterContext {
+  organizationId: string;
+  connectionId: string;
+}
+
+export type AdapterRegistry = (provider: Provider, context?: AdapterContext) => ProviderAdapter | Promise<ProviderAdapter>;

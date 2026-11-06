@@ -43,6 +43,15 @@ export const newCandidate = (org: Fx) => cli<{ itemId: string; candidateId: stri
 export const notify = (org: Fx, itemId: string, type: "sla_breach" | "review_ownership", who: keyof Fx["users"]) => cli<{ inApp: number; email: number }>("notify", { org, itemId, type, who });
 export const humanMove = (org: Fx, itemId: string, to: "RESOLUTION_CONFIRMED" | "CLOSED") => cli("human-move", { org, itemId, to });
 export const queueReview = (org: Fx, type: "OWNERSHIP" | "LOW_CONFIDENCE", itemId: string) => cli("queue-review", { org, type, itemId });
+export const gmailSync = (organizationId: string, monitoredSourceId: string, analyze = true) =>
+  cli<{ summary: { status: string; reason?: string; messagesCreated: number; messagesExisting: number }; statuses: string[]; reasons: string[] }>("gmail-sync", { organizationId, monitoredSourceId, analyze });
+
+/** Steer the fake Google (a separate process): who the next consent grants, mail arriving, access being revoked. */
+export async function fakeGoogle(path: "consent" | "add-message" | "expire-history" | "revoke-refresh" | "expire-access" | "state", body: unknown = {}): Promise<Record<string, unknown>> {
+  const res = await fetch(`http://127.0.0.1:${process.env["FAKE_GOOGLE_PORT"] ?? 4010}/__control/${path}`, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`fake google ${path} failed: ${res.status}`);
+  return (await res.json()) as Record<string, unknown>;
+}
 export const cleanup = (...orgs: Fx[]) => cli("cleanup", { orgs });
 
 export const stateOf = async (itemId: string) => (await sql<{ state: string }>(`select state from "TrackedItem" where id = $1`, [itemId]))[0]!.state;

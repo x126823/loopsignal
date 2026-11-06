@@ -212,9 +212,28 @@ model SourceConnection {
   status                 ConnectionStatus  @default(ACTIVE)
   createdAt              DateTime          @default(now()) @db.Timestamptz(3)
   monitoredSources       MonitoredSource[]
+  credential             ConnectionCredential?
 
   @@unique([organizationId, id])
   @@index([organizationId, provider])
+}
+
+/// OAuth credentials for one connection. `tokens` is AES-256-GCM ciphertext (JSON of the access and refresh token, bound by AAD to
+/// this organization and connection). Only src/modules/sources reads or writes this table; nothing else may select it.
+model ConnectionCredential {
+  id                   String           @id @default(uuid(7)) @db.Uuid
+  organizationId       String           @db.Uuid
+  connectionId         String           @db.Uuid
+  tokens               Bytes
+  /// Not secret: when the stored access token stops being valid.
+  accessTokenExpiresAt DateTime         @db.Timestamptz(3)
+  /// When the Gmail push watch lapses (watches last 7 days). Null when no watch is registered.
+  watchExpiresAt       DateTime?        @db.Timestamptz(3)
+  createdAt            DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(3)
+  connection           SourceConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, connectionId])
 }
 
 model MonitoredSource {

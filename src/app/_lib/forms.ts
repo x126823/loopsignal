@@ -51,3 +51,7 @@ export function formObject(formData: FormData): Record<string, string> {
   for (const [k, v] of formData.entries()) if (typeof v === "string" && !(k in out) && !k.startsWith("$ACTION")) out[k] = v;
   return out;
 }
+
+export const connectGmailForm = z.object({ teamId: uuid });
+export const disconnectForm = z.object({ connectionId: uuid });
+export const syncNowForm = z.object({ sourceId: uuid });
