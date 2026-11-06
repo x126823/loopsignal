@@ -321,6 +321,14 @@ Runbooks: `docs/runbooks/`. Review and findings: `docs/SECURITY_REVIEW.md`.
 
 **Browser-side defenses.** `src/proxy.ts` applies a nonce-based Content Security Policy to every request (strict in production; development relaxes only `unsafe-eval`, hot-reload sockets and the style nonce), and `next.config.ts` adds the static headers. Authorization is never decided in the proxy: every page and server action resolves the caller itself, and a structural test fails if an action does not.
 
+**Alerting** (`src/lib/alerts.ts`). Events that need a person (audit chain broken or no longer matching an anchor, the Chat app's key rejected, a connection that must be reconnected, retention or a worker failing, a dead-lettered job) are POSTed as JSON to `ALERT_WEBHOOK_URL`. The vocabulary is closed with fixed summaries and the details are limited to id-shaped values, so nothing sensitive can be in an alert; sending is best effort, signed (HMAC) when a secret is set, never follows redirects, retries once, and never blocks or fails its caller; a recurring problem alerts once per window per process. Every alert is also logged.
+
+**Sessions.** A sign-in lasts `SESSION_HOURS` (default 12) from sign-in. A session token says who someone is and when it was issued, never what they may do (that is resolved from the database on every request). `User.sessionsValidAfter` voids sessions issued before it: a person ends their own (**Security → Sign out everywhere**), an administrator ends a member's through a narrow database function that re-checks the administrator's role and the target's membership. The app refuses a session issued before the moment, and a fresh sign-in in the same second still works.
+
+**Audit anchors.** With `AUDIT_ANCHOR_KEY` set, the daily check signs a snapshot (sequence and hash) of each healthy chain's head, logs it, optionally appends it to `AUDIT_ANCHOR_FILE`, and checks the chain against every earlier anchor there. Deleted newest rows, removed rows and rewritten rows are all detected; a damaged chain is never anchored.
+
+**Start-up validation.** `src/instrumentation.ts` validates the whole environment before the web server accepts a request and exits on a bad configuration, naming the invalid settings (never values); the worker validates at start too. `npm run rehearse:production` boots both in production mode against a throwaway database and checks the production checklist.
+
 **Authentication in production.** `AUTH_URL` is required and pins the host Auth.js trusts. (Setting `trustHost: false` explicitly, as the code did before, makes every production sign-in fail.)
 
 **Capacity and the database pool.** `DB_POOL_MAX` (20) and `DB_TX_MAX_WAIT_MS` (10 s) are configurable. List pages are bounded (the review queue shows the oldest 100 with an honest total that counts only what the viewer may see). Measured numbers are in `docs/runbooks/load-test.md`.

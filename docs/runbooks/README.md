@@ -9,7 +9,8 @@ Operating LoopSignal. Each runbook is written to be followed under stress: what 
 | [Key rotation](key-rotation.md) | Rotating `FIELD_ENCRYPTION_KEY`, `AUTH_SECRET`, Google client or Chat app credentials, or after a suspected leak |
 | [Backup and restore](backup-restore.md) | Taking backups, proving they restore, or restoring for real |
 | [Retention and erasure](retention.md) | Changing how long content is kept, running a pass, or honouring an erasure request |
-| [Audit log integrity](audit-chain.md) | The daily check reports a broken chain |
+| [Alerting](alerting.md) | Setting up the webhook, what each alert means, testing it |
+| [Audit log integrity](audit-chain.md) | The daily check reports a broken chain or a mismatched anchor; setting up anchors |
 | [Gmail and Google Chat](integrations.md) | A connection needs attention, mail or Chat stopped arriving, enabling or disabling an integration |
 | [Queues and dead letters](queues.md) | Jobs failing, backlog growing, analysis deferred, database connection errors |
 | [Load test and capacity](load-test.md) | Sizing, regression checks, or "is it slow?" |

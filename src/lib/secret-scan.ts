@@ -3,7 +3,7 @@
  * credentials this project could plausibly leak (Google, Anthropic, cloud and source-host tokens, private keys). It is pure so it can be
  * tested; scripts/secret-scan.ts runs it over the files git tracks. A finding names the file, line and kind, never the value.
  */
-export interface Finding { path: string; line: number; kind: string }
+export interface Finding { path: string; line: number; kind: string; /** Set when the finding is in history rather than in the current files. */ commit?: string }
 
 const RULES: Array<{ kind: string; pattern: RegExp }> = [
   { kind: "private key", pattern: /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----\s*[A-Za-z0-9+/=\\n\s]{100,}/ },
@@ -42,4 +42,25 @@ export function scanText(path: string, text: string): Finding[] {
 
 export function scanPaths(paths: string[]): Finding[] {
   return paths.filter((p) => FORBIDDEN_PATHS.some((re) => re.test(p))).map((path) => ({ path, line: 0, kind: "file that must not be committed" }));
+}
+
+/**
+ * Scan the output of `git log --all -p -U0 --no-color --format="@@COMMIT %H"` for secrets that were EVER added, including ones a later
+ * commit removed (a removed secret is still a leaked secret: rotate it). Only added lines are examined. Pure, so it is tested.
+ */
+export function scanHistoryLog(log: string): Finding[] {
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  for (const block of log.split(/^@@COMMIT /m).slice(1)) {
+    const commit = block.slice(0, block.indexOf("\n")).trim().slice(0, 12);
+    for (const part of block.split(/^diff --git /m).slice(1)) {
+      const path = /^a\/(.+?) b\//.exec(part)?.[1] ?? "(unknown)";
+      const added = part.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+      for (const f of scanText(path, added)) {
+        const key = `${commit}|${path}|${f.kind}`;
+        if (!seen.has(key)) { seen.add(key); findings.push({ ...f, commit }); }
+      }
+    }
+  }
+  return findings;
 }

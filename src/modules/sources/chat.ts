@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { raiseAlert } from "@/lib/alerts";
 import { decryptField, encryptField } from "@/lib/crypto/fields";
 import { withTenant } from "@/lib/db";
 import { getEnv } from "@/lib/env";
@@ -88,6 +89,7 @@ export function chatAdapterFor(_ctx: AdapterContext, deps: ChatDeps = {}): Provi
       } catch (e) {
         if (!(e instanceof ProviderAuthError)) throw e;
         log("error", "chat.app_credentials_rejected", { code: e.code });
+        void raiseAlert("chat.app_credentials_rejected", { code: e.code });
         throw new ProviderSourceUnavailableError();
       }
     },
@@ -145,7 +147,7 @@ export async function startSpaceClaim(principal: Principal, input: { space: stri
 
 export type VerifyOutcome =
   | { outcome: "VERIFIED"; monitoredSourceId: string }
-  | { outcome: "NOT_FOUND" | "NOT_PENDING" | "EXPIRED" | "CODE_NOT_SEEN" | "APP_NOT_IN_SPACE" | "ALREADY_BOUND" };
+  | { outcome: "NOT_FOUND" | "NOT_PENDING" | "EXPIRED" | "CODE_NOT_SEEN" | "APP_NOT_IN_SPACE" | "ALREADY_BOUND" | "CLAIMED_EARLIER" };
 
 /**
  * Look in the space for the claim's code and, if it is there, bind the space to this organization. Reading happens as the Chat app, so
@@ -179,6 +181,7 @@ export async function verifySpaceClaim(principal: Principal, claimId: string, de
     if (e instanceof ProviderSourceUnavailableError) return { outcome: "APP_NOT_IN_SPACE" };
     if (e instanceof ProviderAuthError) {
       log("error", "chat.app_credentials_rejected", { code: e.code });
+        void raiseAlert("chat.app_credentials_rejected", { code: e.code });
       return { outcome: "APP_NOT_IN_SPACE" };
     }
     throw e;
@@ -188,6 +191,9 @@ export async function verifySpaceClaim(principal: Principal, claimId: string, de
   return withTenant(ctx, async (tx): Promise<VerifyOutcome> => {
     const rows = await tx.$queryRaw<Array<{ elsewhere: boolean }>>`SELECT chat_space_bound_elsewhere(${claim.externalId}, ${organizationId}::uuid) AS elsewhere`;
     if (rows[0]?.elsewhere !== false) return { outcome: "ALREADY_BOUND" }; // taken elsewhere (or no clear answer: fail closed)
+    // Another organization asked for this space first and its request is still open: it keeps its place (see the migration for why).
+    const earlier = await tx.$queryRaw<Array<{ earlier: boolean }>>`SELECT chat_space_claimed_earlier(${claim.externalId}, ${organizationId}::uuid, ${claim.createdAt}::timestamptz, ${now()}::timestamptz) AS earlier`;
+    if (earlier[0]?.earlier !== false) return { outcome: "CLAIMED_EARLIER" }; // fail closed on no clear answer
     let connection = await tx.sourceConnection.findFirst({ where: { provider: "GOOGLE_CHAT" } });
     if (!connection) connection = await tx.sourceConnection.create({ data: { organizationId, provider: "GOOGLE_CHAT", ownerUserId: principal.userId, scopes: [CHAT_APP_MESSAGES_READONLY_SCOPE], status: "ACTIVE" } });
     else if (connection.status !== "ACTIVE") await tx.sourceConnection.update({ where: { organizationId_id: { organizationId, id: connection.id } }, data: { status: "ACTIVE" } });

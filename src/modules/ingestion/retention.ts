@@ -1,5 +1,5 @@
 import type { TenantTx } from "@/lib/db";
-import { encryptField } from "@/lib/crypto/fields";
+import { decryptField, encryptField } from "@/lib/crypto/fields";
 
 /**
  * Removing stored content, for retention and for erasure. Ingestion owns Message and RawEvent, so the data-level work lives here; the
@@ -63,4 +63,36 @@ export async function eraseMessageContent(tx: TenantTx, organizationId: string, 
   const purged = await purgeMessageContent(tx, organizationId, messageIds, { ...opts, subject: "[erased]" });
   await tx.message.updateMany({ where: { id: { in: messageIds } }, data: { subject: "[erased]" } });
   return purged;
+}
+
+export interface ExportedMessage {
+  id: string;
+  provider: string;
+  direction: string;
+  sentAt: string;
+  subject: string | null;
+  /** The message text, or the tombstone text if retention or an erasure already removed it. */
+  body: string;
+  threadId: string;
+  contentRemovedAt: string | null;
+}
+export interface ExportedParticipant { id: string; address: string; displayName: string | null; linkedUserId: string | null; recordedAt: string }
+
+/**
+ * Everything held about one person in message data (a subject-access request): their participant record and every message they wrote,
+ * decrypted. Sensitive by nature: the caller authorizes, audits, and decides where the result goes. Oldest first, at most `limit` messages
+ * (`truncated` says whether there were more).
+ */
+export async function exportParticipantData(tx: TenantTx, organizationId: string, participantId: string, fieldKey: Buffer, limit = 5_000): Promise<{ participant: ExportedParticipant; messages: ExportedMessage[]; truncated: boolean } | null> {
+  const p = await tx.participant.findFirst({ where: { id: participantId } });
+  if (!p) return null;
+  const rows = await tx.message.findMany({ where: { senderParticipantId: p.id }, orderBy: [{ sentAt: "asc" }, { id: "asc" }], take: limit + 1 });
+  return {
+    participant: { id: p.id, address: p.address, displayName: p.displayName, linkedUserId: p.userId, recordedAt: p.createdAt.toISOString() },
+    messages: rows.slice(0, limit).map((m) => ({
+      id: m.id, provider: m.provider, direction: m.direction, sentAt: m.sentAt.toISOString(), subject: m.subject, threadId: m.threadId,
+      body: decryptField(m.bodyText, fieldKey, `${organizationId}:Message.bodyText`), contentRemovedAt: m.contentPurgedAt?.toISOString() ?? null,
+    })),
+    truncated: rows.length > limit,
+  };
 }

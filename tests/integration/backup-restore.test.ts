@@ -20,7 +20,7 @@ describe("backup and restore drill", () => {
     expect(report.ok).toBe(true);
     expect(report.checks.map((c) => c.name)).toEqual(expect.arrayContaining([
       "backup completes", "restore completes without errors", "every table has the same number of rows", "every organization's audit chain verifies",
-      "row-level security, forcing and every policy came back", "the app and maintenance roles kept exactly their privileges", "the append-only guards still reject changes, even from the owner",
+      "row-level security, forcing and every policy came back", "the app and maintenance roles kept exactly their privileges", "the append-only triggers are present and enabled on every append-only table", "the append-only guards still reject changes, even from the owner",
       "the maintenance functions kept their owner", "the app role sees its own tenant's rows and nothing else", "stored content decrypts with the current key",
     ]));
     expect(report.dumpBytes).toBeGreaterThan(10_000);
@@ -30,6 +30,7 @@ describe("backup and restore drill", () => {
     ["rls", "row-level security, forcing and every policy came back"],
     ["audit", "every organization's audit chain verifies"],
     ["guard", "the append-only guards still reject changes, even from the owner"],
+    ["guard", "the append-only triggers are present and enabled on every append-only table"],
     ["rows", "every table has the same number of rows"],
     ["grants", "the app and maintenance roles kept exactly their privileges"],
   ];

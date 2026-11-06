@@ -40,7 +40,7 @@ A person may ask for what you hold about them to be removed. This removes **ever
 npm run ops:erase-person -- --org <organizationId> --participant <participantId> --as <adminUserId>          # checks only
 npm run ops:erase-person -- --org <organizationId> --participant <participantId> --as <adminUserId> --yes    # does it
 ```
-It runs as an organization administrator, so the audit log records who did it (`participant.erased`, with counts, no content), and prints counts only. Find the participant id from the organization's data (for Chat, the People in Chat list).
+It runs as an organization administrator, so the audit log records who did it (`participant.erased`, with counts, no content), and prints counts only. Find the participant id from the organization's data (for Chat, the People in Chat list). If the person also asked for a copy, run the export below first.
 
 What it does **not** remove, by design (say so to the requester):
 - What **other people** wrote about them, and replies that quote them.
@@ -48,4 +48,11 @@ What it does **not** remove, by design (say so to the requester):
 - The message rows, ids, times and directions, the items and the audit log: that is the lifecycle record, and it holds no text.
 - **Backups** taken before the erasure (see [Backup and restore](backup-restore.md)), until they expire.
 
-**Export** of a person's data is not built. If a request arrives: query `Message`/`Participant` for the participant id (metadata) and decrypt their bodies with the field key under supervision, and record the request in your own log. Building a proper export is listed as follow-up work.
+## Exporting a person's data (subject access)
+
+```
+npm run ops:export-person -- --org <organizationId> --participant <participantId> --as <adminUserId> --out <path of a NEW file>
+```
+Writes everything held about the person to **a file only you can read** (mode 0600, and it refuses to overwrite anything), and prints counts and the path, never content. It contains: their participant record (address, name, whether linked to a LoopSignal user), **every message they wrote, decrypted** (or the removal marker if retention or an erasure already took the text), and the items those messages started. It is audited as an administrator action (`participant.exported`, counts only). If there are more than 5,000 messages the file says `truncated: true`.
+
+The file holds message text: hand it over through a channel you trust, then delete it. Not included, by design (the file lists this too): what other people wrote to or about them, replies that quote them, the audit log, and backups taken earlier. Export before you erase if the person asked for both.

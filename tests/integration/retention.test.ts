@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createPrismaClient } from "@/lib/db";
 import { decryptField, encryptField } from "@/lib/crypto/fields";
-import { runRetention, getRetention, setRetention, erasePerson, getRetentionStatus, verifyAllAuditChains, RETENTION_DEFAULTS } from "@/modules/retention";
+import { runRetention, getRetention, setRetention, erasePerson, exportPerson, getRetentionStatus, verifyAllAuditChains, RETENTION_DEFAULTS } from "@/modules/retention";
 import { handleRetention } from "@/workers/maintenance";
 import { createEngineFixture, type EngineFixture } from "../helpers/engine-fixture";
 import { asLifecycleWriter, purgeOrgs, testKey } from "../helpers/fixtures";
@@ -425,6 +425,62 @@ describe("erasing a person", () => {
     expect(await purged(a, s.messageId)).toBe(false);
     expect(await owner.participant.findUniqueOrThrow({ where: { organizationId_id: { organizationId: a.organizationId, id: participantId } } })).toMatchObject({ address: "users/keep" });
     expect(await owner.auditLog.count({ where: { organizationId: { in: [a.organizationId, b.organizationId] }, action: "participant.erased" } })).toBe(0);
+  });
+});
+
+describe("exporting a person's data (subject access)", () => {
+  it("returns their record, every message they wrote (decrypted, or the removal marker), and the items they started, and nothing of anyone else's", async () => {
+    const f = await fresh();
+    const person = "users/export-me";
+    const a = await seed(f, { received: 2, item: "OPEN", text: "Hello, I am Pat and my number is 555-0100.", sender: person });
+    const old = await seed(f, { received: 300, text: "An old message from Pat.", sender: person });
+    await seed(f, { received: 2, text: "A different customer entirely.", sender: "users/not-me" });
+    await runRetention(f.organizationId, deps()); // the old message's text is already gone
+    const participantId = (await owner.participant.findFirstOrThrow({ where: { organizationId: f.organizationId, address: person } })).id;
+
+    const out = (await exportPerson(f.principals.admin, { participantId }, deps()))!;
+    expect(out.participant).toMatchObject({ id: participantId, address: person, displayName: "Pat Customer", linkedUserId: null });
+    expect(out.messages.map((m) => m.id)).toEqual([old.messageId, a.messageId]); // oldest first
+    expect(out.messages.find((m) => m.id === a.messageId)).toMatchObject({ body: "Hello, I am Pat and my number is 555-0100.", direction: "INBOUND", subject: "Printer jams", contentRemovedAt: null });
+    expect(out.messages.find((m) => m.id === old.messageId)).toMatchObject({ body: "[removed by retention]", contentRemovedAt: expect.any(String) });
+    expect(out.itemsStarted.map((i) => i.id)).toEqual([a.itemId]);
+    expect(out.truncated).toBe(false);
+    expect(JSON.stringify(out)).not.toMatch(/different customer|not-me/);
+    expect(out.notIncluded.length).toBeGreaterThan(0);
+    expect(out.organizationId).toBe(f.organizationId);
+  });
+
+  it("is audited with counts only, and the content never reaches a log", async () => {
+    const f = await fresh();
+    await seed(f, { received: 2, text: "Confidential: Pat's account number is 99-1234.", sender: "users/audited" });
+    const participantId = (await owner.participant.findFirstOrThrow({ where: { organizationId: f.organizationId, address: "users/audited" } })).id;
+    await exportPerson(f.principals.admin, { participantId }, deps());
+    const audit = await owner.auditLog.findFirstOrThrow({ where: { organizationId: f.organizationId, action: "participant.exported", entityId: participantId } });
+    expect(audit).toMatchObject({ actorId: f.users.admin, actorType: "USER", metadata: { messages: 1, items: 0, truncated: false } });
+    expect(JSON.stringify(audit.metadata)).not.toMatch(/Confidential|99-1234|audited/);
+    expect(logged.join("\n")).not.toMatch(/Confidential|99-1234/);
+  });
+
+  it("says when it cut the list short", async () => {
+    const f = await fresh();
+    for (let i = 0; i < 4; i++) await seed(f, { received: 2, sender: "users/prolific" });
+    const participantId = (await owner.participant.findFirstOrThrow({ where: { organizationId: f.organizationId, address: "users/prolific" } })).id;
+    const out = (await exportPerson(f.principals.admin, { participantId }, deps({ limit: 3 })))!;
+    expect(out.messages).toHaveLength(3);
+    expect(out.truncated).toBe(true);
+  });
+
+  it("is for administrators of that organization only, and another organization sees nothing", async () => {
+    const a = await fresh();
+    const b = await fresh();
+    await seed(a, { received: 2, sender: "users/private" });
+    const participantId = (await owner.participant.findFirstOrThrow({ where: { organizationId: a.organizationId, address: "users/private" } })).id;
+    for (const who of ["lead", "member", "viewer", "auditor"] as const) {
+      await expect(exportPerson(a.principals[who], { participantId }, deps()), who).rejects.toMatchObject({ name: "ForbiddenError" });
+    }
+    expect(await exportPerson(b.principals.admin, { participantId }, deps())).toBeNull();
+    expect(await exportPerson(a.principals.admin, { participantId: randomUUID() }, deps())).toBeNull();
+    expect(await owner.auditLog.count({ where: { organizationId: { in: [a.organizationId, b.organizationId] }, action: "participant.exported" } })).toBe(0); // refused or empty: nothing was exported
   });
 });
 

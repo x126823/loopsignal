@@ -14,10 +14,10 @@
 | **Prompt injection** via email/chat text (e.g. "mark resolved", "ignore instructions") | Content delimited and labelled untrusted; analyzers have no tools or side effects; Zod-validated output; evidence must be verbatim substring; engine ignores AI claims of authority; confirm/close need human; red-team fixture suite in CI |
 | **Fabricated evidence** | Substring verification against the cited message; mismatches rejected |
 | **Tenant data leakage** | Scoped data layer, Postgres RLS, non-owner DB role, isolation tests for every table |
-| **Privilege escalation** | Server-side RBAC policy functions; approvals checked by engine; role-change audited |
+| **Privilege escalation** | Server-side RBAC policy functions; approvals checked by engine; role-change audited; sessions are time-limited and can be ended by their owner or an administrator |
 | **OAuth token theft** | Envelope encryption at rest; scopes minimal; tokens never logged; rotation and revocation flow |
 | **Webhook spoofing/replay** | Verify Google-signed JWTs / Pub/Sub auth; timestamp and idempotency checks; reject unknown subscriptions |
-| **Audit tampering** | Append-only tables (no UPDATE/DELETE grants + triggers); hash chain; periodic verification job |
+| **Audit tampering** | Append-only tables (no UPDATE/DELETE grants + triggers); hash chain; daily verification job; signed anchors (opt-in) to catch deleted newest rows |
 | **Injection (SQL/XSS)** | Prisma parameterization; message HTML sanitized or rendered as text; CSP; no `dangerouslySetInnerHTML` on message content |
 | **SSRF / unsafe links** | Links in messages never fetched server-side; attachments metadata only in v1 |
 | **Secrets exposure** | Env validated; `.env` git-ignored; secret scanning in CI |
@@ -34,7 +34,7 @@
 - Visibility: users see only items from sources and teams they are permitted to see; no broadening beyond native access.
 - Data minimization: store only what's required; attachments metadata only; redact obvious secrets and identifiers before LLM calls.
 - Retention: configurable per-organization windows (defaults 30 days for raw payloads, 180 for bodies), enforced by a daily job, never touching content of an open item; deletion tested. See `docs/runbooks/retention.md`.
-- Subject rights: **erasure** of a person's data is built and audited (`ops:erase-person`); **export** is not (a known gap).
+- Subject rights: **erasure** (`ops:erase-person`) and **export** (`ops:export-person`) of a person's data are built and audited; the export file holds decrypted message text, is created owner-only, and is never printed.
 - LLM provider: review data-handling and retention terms; use zero-retention options where available; no training on customer content.
 - Logs, analytics, error trackers must never receive message content.
 
@@ -71,4 +71,5 @@ Verified on synthetic data and against a fake Google. "Tested" means a test in t
 - [x] Retention jobs tested
 - [x] Dependency and secret scans in CI
 - [x] Incident response and key-rotation runbooks written (`docs/runbooks/`)
+- [x] Sessions can be ended early, alerts reach a webhook, audit anchors catch deleted newest rows (mechanisms built and tested; the receiver and the anchor store are the operator's)
 - [ ] Anything about real providers, real data or a real deployment: **not verified**; see the known gaps in `docs/SECURITY_REVIEW.md`

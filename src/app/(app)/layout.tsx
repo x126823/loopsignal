@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/field";
-import { listPendingApprovals } from "@/modules/lifecycle";
+import { countPendingApprovals } from "@/modules/lifecycle";
 import { countUnread } from "@/modules/notifications";
 import { signOutAction } from "../login/actions";
 import { requireContext } from "../_lib/session";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic"; // every page here depends on who is sig
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const ctx = await requireContext();
-  const pending = (await listPendingApprovals(ctx.principal)).length;
+  const pending = await countPendingApprovals(ctx.principal);
   const unread = await countUnread(ctx.principal);
   const roleLabel = ctx.org.role.replace("_", " ").toLowerCase();
 
@@ -30,6 +30,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <Link href="/review" className="hover:underline">Review queue</Link>
             {ctx.org.role === "ORG_ADMIN" && <Link href="/settings/connections" className="hover:underline" data-testid="nav-connections">Connections</Link>}
             {ctx.org.role === "ORG_ADMIN" && <Link href="/settings/retention" className="hover:underline" data-testid="nav-retention">Retention</Link>}
+            <Link href="/settings/security" className="hover:underline" data-testid="nav-security">Security</Link>
             <Link href="/notifications" className="hover:underline" data-testid="nav-notifications">
               Notifications{unread > 0 && <span className="ml-1.5 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground" aria-label={`${unread} unread`} data-testid="unread-count">{unread}</span>}
             </Link>

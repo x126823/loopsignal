@@ -178,6 +178,28 @@ export async function listPendingApprovals(principal: Principal): Promise<Pendin
   });
 }
 
+/** Items that started from one of these messages: id, title, state, when created. Read-only; the caller authorizes (a subject-access export). */
+export async function listItemsStartedFromMessages(organizationId: string, messageIds: string[]): Promise<Array<{ id: string; title: string; state: ItemState; createdAt: Date }>> {
+  if (messageIds.length === 0) return [];
+  return withTenant({ organizationId }, async (tx) => {
+    const items = await tx.trackedItem.findMany({ where: { originMessageId: { in: messageIds } }, orderBy: { createdAt: "asc" }, select: { id: true, title: true, state: true, createdAt: true } });
+    return items;
+  });
+}
+
+/**
+ * How many approvals this person may see waiting, without reading them: the page layout shows this count on every navigation.
+ * Visibility is the same rule `listPendingApprovals` applies (`can(item:view)`): administrators and auditors see every item, anyone else
+ * the items of the teams they belong to. A test proves the two always agree.
+ */
+export async function countPendingApprovals(principal: Principal): Promise<number> {
+  const everything = principal.orgRole === "ORG_ADMIN" || principal.orgRole === "AUDITOR";
+  const teams = Object.keys(principal.teamRoles);
+  if (!everything && teams.length === 0) return 0;
+  return withTenant(ctxOf(principal), (tx) =>
+    tx.approvalRequest.count({ where: { status: "PENDING", ...(everything ? {} : { item: { teamId: { in: teams } } }) } }));
+}
+
 export interface ReviewTaskView {
   id: string;
   type: ReviewKind;

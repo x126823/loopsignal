@@ -51,6 +51,27 @@ const schema = z
     DB_POOL_MAX: z.coerce.number().int().min(2).max(200).default(20),
     /** How long a transaction may wait for a free connection before failing. Brief queueing is normal under load; failing fast is not. */
     DB_TX_MAX_WAIT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+    /**
+     * Where alerts go (docs/runbooks/alerting.md): a URL that receives a small JSON POST, with ids only, when something needs a human. Unset
+     * means alerts are only logged. https is required (http only for localhost); redirects are never followed.
+     */
+    ALERT_WEBHOOK_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    /** When set, every alert carries `x-loopsignal-signature: sha256=<hmac of the body>` so the receiver can verify where it came from. */
+    ALERT_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
+    /** A problem that keeps recurring alerts once per this many minutes per process, not on every occurrence. */
+    ALERT_DEDUPE_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
+    /**
+     * How long a sign-in lasts, counted from the moment of sign-in (the session is not extended by activity). Shorter limits what a stolen
+     * session is worth; people simply sign in again. See also "Sign out everywhere" under Security.
+     */
+    SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(12),
+    /**
+     * Audit anchors (docs/runbooks/audit-chain.md). With a key, the daily check emits a signed digest of each organization's audit head,
+     * so deleted NEWEST rows (which the hash chain alone cannot reveal) are detectable. The key must be kept apart from the database.
+     */
+    AUDIT_ANCHOR_KEY: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+    /** Optional: append anchors to this file, and check the live chain against it every day. Put it on storage the database host cannot rewrite. */
+    AUDIT_ANCHOR_FILE: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
     /** Retention and audit-chain verification run on a schedule while this is true (the default). `false` is the incident switch: it stops the schedules, nothing else. */
     MAINTENANCE_JOBS_ENABLED: z.enum(["true", "false"]).default("true"),
     /** Google Chat integration. OFF by default; with it off no Chat route, scan or adapter does anything. */
@@ -68,6 +89,10 @@ const schema = z
   .refine((e) => !(e.NODE_ENV === "production" && e.AUTH_DEV_LOGIN === "true"), {
     path: ["AUTH_DEV_LOGIN"],
     message: "dev login must be disabled in production",
+  })
+  .refine((e) => e.ALERT_WEBHOOK_URL === undefined || e.ALERT_WEBHOOK_URL.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(e.ALERT_WEBHOOK_URL), {
+    path: ["ALERT_WEBHOOK_URL"],
+    message: "the alert webhook must be https (http only for localhost)",
   })
   .refine((e) => e.NODE_ENV !== "production" || (e.AUTH_URL !== undefined && (e.AUTH_URL.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(e.AUTH_URL))), {
     path: ["AUTH_URL"],

@@ -132,11 +132,15 @@ export async function runDrill(opts: { sabotage?: Sabotage } = {}): Promise<Dril
       const raw = `drill-${randomBytes(4).toString("hex")}`;
       const inserted = await restored.query(`INSERT INTO "RawEvent" (id, "organizationId", provider, "externalId", payload, "payloadHash") VALUES (gen_random_uuid(), $1, 'SYNTHETIC', $2, '\\x00', 'drill') RETURNING id`, [anyOrg, raw]);
       const rawId = inserted.rows[0].id as string;
-      guards = [
-        await guard(`DELETE FROM "RawEvent" WHERE id = '${rawId}'`), await guard(`UPDATE "RawEvent" SET "payloadHash" = 'x' WHERE id = '${rawId}'`),
-        await guard(`DELETE FROM "AuditLog" WHERE id = (SELECT id FROM "AuditLog" LIMIT 1)`), await guard(`UPDATE "LifecycleEvent" SET reason = 'x' WHERE id = (SELECT id FROM "LifecycleEvent" LIMIT 1)`),
-      ];
+      const hasRow = async (t: string) => (await q(restored!, `SELECT 1 FROM "${t}" LIMIT 1`)).length > 0;
+      guards = [await guard(`DELETE FROM "RawEvent" WHERE id = '${rawId}'`), await guard(`UPDATE "RawEvent" SET "payloadHash" = 'x' WHERE id = '${rawId}'`)];
+      // Behaviour is tested on rows that exist; on an empty table the statement would change nothing and prove nothing, so the triggers are checked directly (below).
+      if (await hasRow("AuditLog")) guards.push(await guard(`DELETE FROM "AuditLog" WHERE id = (SELECT id FROM "AuditLog" LIMIT 1)`));
+      if (await hasRow("LifecycleEvent")) guards.push(await guard(`UPDATE "LifecycleEvent" SET reason = 'x' WHERE id = (SELECT id FROM "LifecycleEvent" LIMIT 1)`));
     }
+    const triggers = await q<{ t: string; n: string }>(restored, `SELECT c.relname AS t, count(*)::text AS n FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
+      WHERE NOT g.tgisinternal AND g.tgenabled = 'O' AND g.tgname IN (c.relname || '_append_only', c.relname || '_no_truncate') AND c.relname IN ('RawEvent', 'LifecycleEvent', 'AuditLog') GROUP BY 1`);
+    check("the append-only triggers are present and enabled on every append-only table", triggers.length === 3 && triggers.every((x) => x.n === "2"), triggers.map((x) => `${x.t}:${x.n}`).join(", ") || "none found");
     check("the append-only guards still reject changes, even from the owner", guards.every((g) => g === "rejected"), guards.join(", "));
     const maint = await q<{ owner: string }>(restored, `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc WHERE proname = 'retention_purge_raw_events'`);
     check("the maintenance functions kept their owner", maint[0]?.owner === "loopsignal_maint", maint[0]?.owner ?? "missing");

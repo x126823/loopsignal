@@ -67,6 +67,11 @@ export default async function RetentionPage({ searchParams }: { searchParams: Pr
                 : `Audit log check FAILED on ${formatDateTime(status.lastVerification.at)}: records may have been altered outside the application. Follow the audit-chain runbook.`
               : "The audit log has not been checked yet (it is checked daily)."}
           </p>
+          <p data-testid="anchor-status" className="text-muted-foreground">
+            {status.anchorsConfigured
+              ? "Signed audit anchors are on: if the newest audit records were deleted, the daily check would notice."
+              : "Signed audit anchors are off. The daily check cannot notice deleted newest audit records; ask the operator to set an anchor key."}
+          </p>
         </CardContent>
       </Card>
     </div>

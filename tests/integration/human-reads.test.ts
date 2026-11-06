@@ -5,7 +5,7 @@ import { ForbiddenError, type Principal } from "@/modules/identity";
 import { loadThreadMessages } from "@/modules/ingestion";
 import { listItemAnalysis } from "@/modules/intelligence";
 import {
-  apply, assignOwner, createItem, getItemDetail, listOpenReviewTasks, listPendingApprovals, listVisibleItems, propose, queueReviewTask, resolveReviewTask,
+  apply, assignOwner, countPendingApprovals, createItem, getItemDetail, listOpenReviewTasks, listPendingApprovals, listVisibleItems, propose, queueReviewTask, resolveReviewTask,
 } from "@/modules/lifecycle";
 import { purgeOrgs, testKey } from "../helpers/fixtures";
 import { at, createAnalysisRun, createEngineFixture, createMessage, createThreadWithMessage, engineOpts, type EngineFixture } from "../helpers/engine-fixture";
@@ -128,6 +128,17 @@ describe("listPendingApprovals", () => {
     const row = (await listPendingApprovals(f.principals.admin)).find((a) => a.itemTitle === "Needs approval")!;
     expect([row.itemState, row.requestedTransition]).toEqual(["RESOLUTION_PROPOSED", "RESOLUTION_CONFIRMED"]);
     expect(await listPendingApprovals(g.principals.admin)).toEqual([]); // nothing leaks across organizations
+  });
+
+  it("the count shown on every page always equals what the list would show, for every role", async () => {
+    for (const who of ["admin", "lead", "member", "viewer", "auditor", "otherTeamMember"] as const) {
+      expect(await countPendingApprovals(f.principals[who]), who).toBe((await listPendingApprovals(f.principals[who])).length);
+    }
+    expect(await countPendingApprovals(f.principals.otherTeamMember)).toBeGreaterThan(0);
+    expect(await countPendingApprovals(f.principals.admin)).toBeGreaterThan(await countPendingApprovals(f.principals.member)); // other teams' approvals are not counted for a member
+    expect(await countPendingApprovals(g.principals.admin)).toBe(0); // nor another organization's
+    const outsider: Principal = { userId: randomUUID(), organizationId: f.organizationId, orgRole: "MEMBER", teamRoles: {} };
+    expect(await countPendingApprovals(outsider)).toBe(0); // no team: nothing visible
   });
 });
 

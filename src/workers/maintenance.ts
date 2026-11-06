@@ -1,6 +1,7 @@
 // Scheduled maintenance: retention (remove content that is due) and audit-chain verification. Both run once a day for every
 // organization, are idempotent, and isolate failures per organization. MAINTENANCE_JOBS_ENABLED=false stops the schedules (the incident
 // switch); it never changes what a job does when it runs.
+import { raiseAlert } from "@/lib/alerts";
 import { listAllOrganizationIds } from "@/lib/db";
 import { log } from "@/lib/log";
 import { QUEUES, type QueueHub } from "@/lib/queue";
@@ -27,6 +28,7 @@ export async function handleRetention(deps: RetentionDeps & { only?: string[] } 
     } catch (e) {
       out.failures++; // one organization's trouble must not stop the others
       log("error", "retention.failed", { organizationId, errorName: e instanceof Error ? e.name : "unknown" });
+      void raiseAlert("retention.failed", { organizationId, errorName: e instanceof Error ? e.name : "unknown" });
     }
   }
   return out;

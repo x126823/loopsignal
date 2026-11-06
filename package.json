@@ -26,7 +26,11 @@
     "load:test": "node --env-file-if-exists=.env --import tsx scripts/load-test.ts",
     "ops:dead-letters": "node --env-file-if-exists=.env --import tsx scripts/dead-letters.ts",
     "ops:retention": "node --env-file-if-exists=.env --import tsx scripts/run-retention.ts",
-    "ops:erase-person": "node --env-file-if-exists=.env --import tsx scripts/erase-person.ts"
+    "ops:erase-person": "node --env-file-if-exists=.env --import tsx scripts/erase-person.ts",
+    "rehearse:production": "node --env-file-if-exists=.env --import tsx scripts/production-rehearsal.ts",
+    "ops:export-person": "node --env-file-if-exists=.env --import tsx scripts/export-person.ts",
+    "ops:audit-anchors": "node --env-file-if-exists=.env --import tsx scripts/audit-anchors.ts",
+    "ops:test-alert": "node --env-file-if-exists=.env --import tsx scripts/test-alert.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

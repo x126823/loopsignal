@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { auth, resolvePrincipal, type Principal } from "@/modules/identity";
+import { auth, getSessionsValidAfter, resolvePrincipal, sessionRevoked, type Principal } from "@/modules/identity";
 import { listUserOrganizations } from "@/modules/tenancy";
 
 /**
@@ -24,7 +24,10 @@ export const getSessionUser = cache(async () => {
   const session = await auth();
   const id = session?.user?.id;
   const email = session?.user?.email;
-  return id && email ? { id, email, name: session?.user?.name ?? null } : null;
+  if (!id || !email) return null;
+  // A session issued before the person (or an administrator) ended all sessions is void, even though its token has not expired.
+  if (sessionRevoked((session as unknown as { issuedAt?: number }).issuedAt, await getSessionsValidAfter(id))) return null;
+  return { id, email, name: session?.user?.name ?? null };
 });
 
 /** The full context, or null when signed out or when the user belongs to no organization. */
