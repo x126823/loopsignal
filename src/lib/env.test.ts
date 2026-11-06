@@ -171,4 +171,37 @@ describe("parseEnv", () => {
       for (const bad of ["0", "169", "x", "1.5"]) expect(() => parseEnv({ ...valid, SESSION_HOURS: bad }), bad).toThrow(/SESSION_HOURS/);
     });
   });
+
+  describe("published development defaults", () => {
+    const prod = { ...valid, NODE_ENV: "production", AUTH_URL: "https://app.example.com" };
+
+    it("are refused in production: the development field key, the development session secrets, the development database passwords", () => {
+      expect(() => parseEnv({ ...prod, FIELD_ENCRYPTION_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" })).toThrow(/FIELD_ENCRYPTION_KEY/);
+      expect(() => parseEnv({ ...prod, AUTH_SECRET: "dev-only-secret-change-me-0123456789abcdef" })).toThrow(/AUTH_SECRET/);
+      expect(() => parseEnv({ ...prod, AUTH_SECRET: "ci-only-secret-0123456789abcdef0123456789" })).toThrow(/AUTH_SECRET/);
+      expect(() => parseEnv({ ...prod, DATABASE_URL: "postgresql://loopsignal:loopsignal@db.internal:5432/loopsignal" })).toThrow(/APP_DATABASE_URL/);
+      expect(() => parseEnv({ ...prod, APP_DATABASE_URL: "postgresql://loopsignal_app:loopsignal_app@db.internal:5432/loopsignal" })).toThrow(/APP_DATABASE_URL/);
+      expect(() => parseEnv({ ...prod, APP_DATABASE_URL: "postgresql://loopsignal_app:loopsignal%5Fapp@db.internal:5432/loopsignal" })).toThrow(/APP_DATABASE_URL/); // percent-encoding does not disguise it
+      expect(() => parseEnv({ ...prod, APP_DATABASE_URL: "postgresql://loopsignal_app:loopsignal_app2@db.internal:5432/loopsignal" })).not.toThrow(); // a different password is a different password
+    });
+
+    it("are fine in development and test, where they are meant to be used", () => {
+      const dev = { ...valid, FIELD_ENCRYPTION_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", AUTH_SECRET: "dev-only-secret-change-me-0123456789abcdef", DATABASE_URL: "postgresql://loopsignal:loopsignal@localhost:5432/loopsignal", APP_DATABASE_URL: "postgresql://loopsignal_app:loopsignal_app@localhost:5432/loopsignal" };
+      expect(parseEnv(dev).NODE_ENV).toBe("development");
+      expect(parseEnv({ ...dev, NODE_ENV: "test" }).NODE_ENV).toBe("test");
+    });
+
+    it("accept real secrets and real passwords", () => {
+      expect(parseEnv({ ...prod, DATABASE_URL: "postgresql://owner:Zk9-real-password@db.internal:5432/app", APP_DATABASE_URL: "postgresql://loopsignal_app:Qp3-another-one@db.internal:5432/app" }).NODE_ENV).toBe("production");
+    });
+
+    it("can be allowed for the database passwords only, for the production rehearsal on development infrastructure, and for nothing else", () => {
+      const devDb = { ...prod, DATABASE_URL: "postgresql://loopsignal:loopsignal@localhost:5432/x", APP_DATABASE_URL: "postgresql://loopsignal_app:loopsignal_app@localhost:5432/x" };
+      expect(() => parseEnv(devDb)).toThrow(/APP_DATABASE_URL/);
+      expect(parseEnv({ ...devDb, ALLOW_DEV_DB_CREDENTIALS: "true" }).NODE_ENV).toBe("production");
+      expect(() => parseEnv({ ...devDb, ALLOW_DEV_DB_CREDENTIALS: "true", FIELD_ENCRYPTION_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" })).toThrow(/FIELD_ENCRYPTION_KEY/);
+      expect(() => parseEnv({ ...devDb, ALLOW_DEV_DB_CREDENTIALS: "true", AUTH_SECRET: "dev-only-secret-change-me-0123456789abcdef" })).toThrow(/AUTH_SECRET/);
+      expect(() => parseEnv({ ...devDb, ALLOW_DEV_DB_CREDENTIALS: "maybe" })).toThrow(/ALLOW_DEV_DB_CREDENTIALS/);
+    });
+  });
 });

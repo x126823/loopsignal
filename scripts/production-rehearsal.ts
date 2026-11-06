@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { encode } from "next-auth/jwt";
 import { Pool } from "pg";
 import { Queue } from "bullmq";
+import { PUBLISHED_FIELD_KEY } from "../src/lib/env";
 import { redisConnection } from "../src/lib/queue";
 
 const WEB_PORT = 3020;
@@ -31,7 +32,9 @@ const prodEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
   DATABASE_URL: dbUrl(ownerUrl), APP_DATABASE_URL: dbUrl(appUrl), REDIS_URL: process.env["REDIS_URL"]!, QUEUE_PREFIX: prefix,
   AUTH_SECRET, FIELD_ENCRYPTION_KEY: FIELD_KEY, AUTH_URL: `http://localhost:${WEB_PORT}`, AUTH_DEV_LOGIN: "false",
   GMAIL_ENABLED: "false", GOOGLE_CHAT_ENABLED: "false", LLM_PROVIDER: "fake", GOOGLE_OAUTH_CLIENT_ID: "", GOOGLE_OAUTH_CLIENT_SECRET: "", GOOGLE_TEST_BASE_URL: "",
-  GMAIL_PUBSUB_TOPIC: "", GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: "", MAINTENANCE_JOBS_ENABLED: "true", ...extra,
+  GMAIL_PUBSUB_TOPIC: "", GOOGLE_CHAT_SERVICE_ACCOUNT_JSON: "", MAINTENANCE_JOBS_ENABLED: "true",
+  ALLOW_DEV_DB_CREDENTIALS: "true", // the rehearsal runs on the development database server, whose role passwords are published; a real deployment never sets this
+  ...extra,
 });
 
 const children: ChildProcess[] = [];
@@ -77,6 +80,8 @@ async function main(): Promise<void> {
       ["no AUTH_URL", { AUTH_URL: "" }, "AUTH_URL"], ["dev login enabled", { AUTH_DEV_LOGIN: "true" }, "AUTH_DEV_LOGIN"],
       ["the Google test endpoint override", { GOOGLE_TEST_BASE_URL: "http://127.0.0.1:4010" }, "GOOGLE_TEST_BASE_URL"], ["http AUTH_URL on a real host", { AUTH_URL: "http://app.example.com" }, "AUTH_URL"],
       ["Gmail enabled without its client", { GMAIL_ENABLED: "true" }, "GOOGLE_OAUTH_CLIENT_ID"],
+      ["the published development field key", { FIELD_ENCRYPTION_KEY: PUBLISHED_FIELD_KEY }, "FIELD_ENCRYPTION_KEY"], ["a published development session secret", { AUTH_SECRET: "dev-only-secret-change-me-0123456789abcdef" }, "AUTH_SECRET"],
+      ["the published development database passwords", { ALLOW_DEV_DB_CREDENTIALS: "false" }, "APP_DATABASE_URL"],
     ] as const) {
       const p = startWeb(prodEnv(extra));
       let out = "";

@@ -30,7 +30,7 @@ const hasLocal = (tool: string) => spawnSync(tool, ["--version"], { stdio: "igno
 function pgTool(tool: "pg_dump" | "pg_restore", c: Conn, args: string[], io: { stdin?: number; stdout?: number }): { status: number; stderr: string } {
   const useDocker = process.env["DRILL_DOCKER"] === "1" || !hasLocal(tool);
   const [cmd, argv] = useDocker
-    ? ["docker", ["compose", "exec", "-T", "-e", `PGPASSWORD=${c.password}`, "postgres", tool, "-U", c.user, ...args]]
+    ? ["docker", ["compose", ...(process.env["DRILL_COMPOSE_FILE"] ? ["-f", process.env["DRILL_COMPOSE_FILE"]] : []), "exec", "-T", "-e", `PGPASSWORD=${c.password}`, "postgres", tool, "-U", c.user, ...args]]
     : [tool, ["-h", c.host, "-p", c.port, "-U", c.user, ...args]];
   const r = spawnSync(cmd, argv, { env: { ...process.env, PGPASSWORD: c.password }, stdio: [io.stdin ?? "ignore", io.stdout ?? "ignore", "pipe"], encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   return { status: r.status ?? 1, stderr: String(r.stderr ?? "").trim().split("\n").slice(-3).join(" | ") };

@@ -30,7 +30,17 @@
     "rehearse:production": "node --env-file-if-exists=.env --import tsx scripts/production-rehearsal.ts",
     "ops:export-person": "node --env-file-if-exists=.env --import tsx scripts/export-person.ts",
     "ops:audit-anchors": "node --env-file-if-exists=.env --import tsx scripts/audit-anchors.ts",
-    "ops:test-alert": "node --env-file-if-exists=.env --import tsx scripts/test-alert.ts"
+    "ops:test-alert": "node --env-file-if-exists=.env --import tsx scripts/test-alert.ts",
+    "ops:generate-secrets": "node --import tsx scripts/generate-secrets.ts",
+    "local:init": "node --import tsx scripts/local-init.ts",
+    "real:up": "docker compose --env-file \"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" -f docker-compose.real.yml up -d --wait",
+    "real:down": "docker compose --env-file \"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" -f docker-compose.real.yml down",
+    "real:migrate": "node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" node_modules/prisma/build/index.js migrate deploy",
+    "real:first-admin": "node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" --import tsx scripts/create-first-admin.ts",
+    "real:start": "node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" node_modules/next/dist/bin/next start -p \"${PORT:-3000}\"",
+    "real:worker": "NODE_ENV=production node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" --import tsx src/workers/index.ts",
+    "real:backup": "node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" --import tsx scripts/real-backup.ts",
+    "real:drill": "DRILL_COMPOSE_FILE=docker-compose.real.yml node --env-file=\"${LOOPSIGNAL_ENV:-$HOME/.loopsignal/real.env}\" --import tsx scripts/backup-restore-drill.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

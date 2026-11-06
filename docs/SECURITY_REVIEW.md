@@ -66,6 +66,6 @@ npm run lint && npm run typecheck && npm test && npm run test:e2e
 npm audit --omit=dev --audit-level=high
 npm run scan:secrets
 npm run drill:restore
-npm run build && npm run rehearse:production   # the production checklist, executed (32 checks)
+npm run build && npm run rehearse:production   # the production checklist, executed (35 checks)
 npm run load:test -- --assert            # needs a running dev server; see docs/runbooks/load-test.md
 ```

@@ -2,6 +2,12 @@ import { z } from "zod";
 
 const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
 
+/** The development values published in .env.example, docker-compose and CI. Anyone can read them, so production must never run with them. */
+export const PUBLISHED_FIELD_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+const isPublishedSecret = (v: string) => v.startsWith("dev-only-secret") || v.startsWith("ci-only-secret");
+const passwordOf = (url: string): string => { try { return decodeURIComponent(new URL(url).password); } catch { return ""; } };
+const DEV_DB_PASSWORDS = new Set(["loopsignal", "loopsignal_app"]);
+
 const schema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -25,6 +31,11 @@ const schema = z
     FIELD_ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64"),
     /** The public URL of the app. Required in production: it pins the host Auth.js will trust (and redirect to). */
     AUTH_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    /**
+     * ONLY for rehearsing production on the development database server (npm run rehearse:production), whose role passwords are published.
+     * Production refuses those passwords otherwise. Never set this on a real deployment.
+     */
+    ALLOW_DEV_DB_CREDENTIALS: z.enum(["true", "false"]).default("false"),
     AUTH_DEV_LOGIN: z.enum(["true", "false"]).default("false"),
     AUTH_GOOGLE_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     AUTH_GOOGLE_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -93,6 +104,18 @@ const schema = z
   .refine((e) => e.ALERT_WEBHOOK_URL === undefined || e.ALERT_WEBHOOK_URL.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(e.ALERT_WEBHOOK_URL), {
     path: ["ALERT_WEBHOOK_URL"],
     message: "the alert webhook must be https (http only for localhost)",
+  })
+  .refine((e) => !(e.NODE_ENV === "production" && e.FIELD_ENCRYPTION_KEY === PUBLISHED_FIELD_KEY), {
+    path: ["FIELD_ENCRYPTION_KEY"],
+    message: "production must not use the published development key: generate one (npm run ops:generate-secrets)",
+  })
+  .refine((e) => !(e.NODE_ENV === "production" && isPublishedSecret(e.AUTH_SECRET)), {
+    path: ["AUTH_SECRET"],
+    message: "production must not use a published development secret: generate one (npm run ops:generate-secrets)",
+  })
+  .refine((e) => !(e.NODE_ENV === "production" && e.ALLOW_DEV_DB_CREDENTIALS !== "true" && (DEV_DB_PASSWORDS.has(passwordOf(e.DATABASE_URL)) || DEV_DB_PASSWORDS.has(passwordOf(e.APP_DATABASE_URL)))), {
+    path: ["APP_DATABASE_URL"],
+    message: "production must not use the development database passwords: give the roles their own",
   })
   .refine((e) => e.NODE_ENV !== "production" || (e.AUTH_URL !== undefined && (e.AUTH_URL.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(e.AUTH_URL))), {
     path: ["AUTH_URL"],
