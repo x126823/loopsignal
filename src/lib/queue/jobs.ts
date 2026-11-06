@@ -11,6 +11,7 @@ export const QUEUES = {
   analyzeMessage: "analyze-message",
   slaScan: "sla-scan",
   slaRisk: "sla-risk",
+  correlationFollowUp: "correlation-follow-up",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -27,11 +28,16 @@ export type SlaScanJob = z.infer<typeof slaScanJob>;
 export const slaRiskJob = z.object({ organizationId: uuid, itemId: uuid, timerId: uuid }).strict();
 export type SlaRiskJob = z.infer<typeof slaRiskJob>;
 
+/** After a person decides a cross-channel candidate: queue the work that follows (create the item, catch up replies). */
+export const correlationFollowUpJob = z.object({ organizationId: uuid, candidateId: uuid }).strict();
+export type CorrelationFollowUpJob = z.infer<typeof correlationFollowUpJob>;
+
 export const JOB_SCHEMAS = {
   [QUEUES.ingestSource]: ingestSourceJob,
   [QUEUES.analyzeMessage]: analyzeMessageJob,
   [QUEUES.slaScan]: slaScanJob,
   [QUEUES.slaRisk]: slaRiskJob,
+  [QUEUES.correlationFollowUp]: correlationFollowUpJob,
 } as const;
 
 /** Deterministic job ids make enqueueing idempotent: BullMQ ignores an add whose id already exists. No ":" allowed. */
@@ -41,6 +47,10 @@ export const jobIds = {
   analyzeMessage: (j: AnalyzeMessageJob) => `analyze-${j.messageId}`,
   /** One risk assessment per timer that enters its warning window. */
   slaRisk: (j: SlaRiskJob) => `sla-risk-${j.timerId}`,
+  /** One follow-up per decided candidate. */
+  correlationFollowUp: (j: CorrelationFollowUpJob) => `correlation-follow-up-${j.candidateId}`,
+  /** Re-analysis of a message after a person's decision. Distinct from the original `analyze-<id>` job, which may still be retained. */
+  analyzeAfterDecision: (messageId: string, candidateId: string) => `analyze-${messageId}-after-${candidateId}`,
 };
 
 /** What lands in a dead-letter queue: ids and the error class only. Error messages can echo content, so they are dropped. */

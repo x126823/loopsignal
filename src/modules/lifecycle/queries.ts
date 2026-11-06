@@ -206,7 +206,7 @@ export async function listOpenReviewTasks(principal: Principal): Promise<ReviewT
   });
 }
 
-export type ReviewResolveOutcome = { outcome: "RESOLVED" } | { outcome: "DISMISSED" } | { outcome: "REJECTED"; reason: "NOT_FOUND" | "NOT_OPEN" };
+export type ReviewResolveOutcome = { outcome: "RESOLVED" } | { outcome: "DISMISSED" } | { outcome: "REJECTED"; reason: "NOT_FOUND" | "NOT_OPEN" | "DECISION_REQUIRED" };
 
 /** A person closes a review task. Audited in the same transaction. Throws ForbiddenError if the role may not. */
 export async function resolveReviewTask(principal: Principal, req: { id: string; status: "RESOLVED" | "DISMISSED"; resolution?: string }): Promise<ReviewResolveOutcome> {
@@ -214,6 +214,9 @@ export async function resolveReviewTask(principal: Principal, req: { id: string;
   return withTenant(ctxOf(principal), async (tx) => {
     const task = await tx.reviewTask.findUnique({ where: { id: req.id } });
     if (!task) return { outcome: "REJECTED", reason: "NOT_FOUND" } as const;
+    // A cross-channel question is closed only by deciding it (confirm or reject), which also acts on the candidate. Closing the
+    // task alone would leave the message waiting forever, so the generic close refuses it.
+    if (task.type === "CORRELATION" && task.status === "OPEN") return { outcome: "REJECTED", reason: "DECISION_REQUIRED" } as const;
     if (task.refType === "TrackedItem") {
       const item = await tx.trackedItem.findUnique({ where: { id: task.refId } });
       if (!item) return { outcome: "REJECTED", reason: "NOT_FOUND" } as const;

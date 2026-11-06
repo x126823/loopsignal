@@ -3,4 +3,4 @@
 export { canonicalJson, ingestEvent, type IngestParams, type IngestResult } from "./ingest";
 export { enqueueOrganizationSync, syncSource, type SyncDeps, type SyncSummary } from "./sync";
 export { handleIngestSourceJob } from "./handlers";
-export { listThreadMessageRefs, loadMessageContext, loadThreadMessages, type MessageContext, type ThreadMessageRef, type ThreadMessageView } from "./context";
+export { listThreadMessageRefs, loadMessageContext, loadMessageFeatures, loadThreadMessages, type MessageContext, type MessageFeaturesView, type ThreadMessageRef, type ThreadMessageView } from "./context";

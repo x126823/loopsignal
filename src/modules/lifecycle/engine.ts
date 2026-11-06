@@ -215,10 +215,13 @@ async function applyTransition(
   }
   if (req.messageId) {
     const linked = await tx.itemMessageLink.findUnique({ where: { itemId_messageId: { itemId: item.id, messageId: req.messageId } } });
+    const role = ROLE_FOR_STATE[rule.to] ?? "OTHER";
     if (!linked) {
-      await tx.itemMessageLink.create({
-        data: { organizationId: item.organizationId, itemId: item.id, messageId: req.messageId, role: ROLE_FOR_STATE[rule.to] ?? "OTHER" },
-      });
+      await tx.itemMessageLink.create({ data: { organizationId: item.organizationId, itemId: item.id, messageId: req.messageId, role } });
+    } else if (linked.role === "OTHER" && role !== "OTHER") {
+      // A message attached from another channel (role OTHER) that later drives a transition takes that transition's role, so the
+      // link records that it now carries history (a split is refused for such messages).
+      await tx.itemMessageLink.update({ where: { id: linked.id }, data: { role } });
     }
   }
 

@@ -5,6 +5,7 @@ import { closeQueueHub, QUEUES, queueHub } from "@/lib/queue";
 import { handleIngestSourceJob } from "@/modules/ingestion";
 import { createProviderFromEnv } from "@/modules/intelligence";
 import { analyzeProcessor } from "./analyze-message";
+import { handleCorrelationFollowUp } from "./correlation-follow-up";
 import { handleSlaRisk } from "./sla-risk";
 import { handleSlaScan, registerSlaScanSchedule } from "./sla-scan";
 
@@ -39,7 +40,10 @@ slaRisk.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.sla
 
 void registerSlaScanSchedule(hub).catch((e) => log("error", "sla.schedule_failed", { errorName: e instanceof Error ? e.name : "unknown" }));
 
-const workers = [ingest, analyze, slaScan, slaRisk];
+const followUp = hub.worker(QUEUES.correlationFollowUp, async (job) => handleCorrelationFollowUp(job.data, { hub }), { concurrency: 2 });
+followUp.on("failed", (job, err) => log("warn", "job.failed", { queue: QUEUES.correlationFollowUp, jobId: job?.id ?? null, attemptsMade: job?.attemptsMade ?? 0, errorName: err.name }));
+
+const workers = [ingest, analyze, slaScan, slaRisk, followUp];
 log("info", "worker.started", { queues: workers.length, prefix: hub.config.prefix, provider: provider.name, model: provider.model });
 
 let stopping = false;

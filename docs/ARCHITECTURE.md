@@ -36,7 +36,7 @@ Rules: modules import each other only via `index.ts`; lint boundaries enforce it
 ## 3. Data flow
 
 1. **Ingest:** adapter fetches or receives an event → store `RawEvent` (immutable, hashed) → normalize to `Message` → dedupe on `(org, provider, externalMessageId)` → enqueue `analyze-message`.
-2. **Analyze:** Intent Classifier decides actionable or not. If actionable, the Ownership Resolver runs. Correlation Analyzer checks for an existing `TrackedItem` (same thread, or cross-channel candidate).
+2. **Analyze:** Intent Classifier decides actionable or not. If actionable, the Ownership Resolver runs. The Correlation step checks for an existing `TrackedItem` (same thread, a thread a person attached, or a cross-channel candidate that a person must decide; section 5d).
 3. **Apply:** the worker calls `lifecycle.propose(...)` with the recommendation. The engine validates and either applies the transition, queues an `ApprovalRequest`, or creates a `ReviewTask`.
 4. **Follow-up messages** on a tracked thread run Ack Detector, Substantive Response Analyzer, Progress Analyzer, Resolution Analyzer as appropriate.
 5. **Timers:** SLA engine derives `SlaTimer` rows from lifecycle events; a repeating scan flags warnings and breaches (section 8); the SLA Risk Analyzer produces advisory risk hints.
@@ -194,6 +194,25 @@ No free text is ever stored from a model: the item title is the message's own su
 **Failures and limits.** A retryable provider error is retried by the queue with backoff; a permanent one is dead-lettered immediately. When the organization's daily budget is spent the job is delayed to 00:05 UTC without using a retry attempt (cached analyses are still served). Throughput is capped per worker process by `ANALYZE_RATE_PER_MINUTE`.
 
 **Golden sets** (`src/modules/intelligence/golden`): labeled synthetic cases per analyzer, run through the same `prepare`/`execute` guards as production with no database. `npm run golden` prints accuracy, precision, recall and a recommended confidence threshold (the lowest at which accepted answers reach 95% precision). The committed baseline `baselines/fake-heuristic-heuristic-1.json` is for the rule-based heuristic and is flagged `notForProduction`: the heuristic was written alongside these small sets (29, 15, 17 and 17 cases), so its scores overstate it and say nothing about a real model. Real baselines and thresholds need `LIVE_LLM=1 npm run golden -- --provider claude --write`, which costs money and should use a larger, independently written set. Until then the placeholder threshold stays at 0.8.
+
+### 5d. Cross-channel correlation (implemented in Sprint 9)
+
+`src/modules/correlation`. The problem: the same matter arrives through two channels (an email, then a Chat message about the same outage) and would become two items. **A false merge hides work, which is worse than a false split, so the system only ever asks; a person always decides** (rule 9). There is no auto-link at any score.
+
+**Finding.** When an inbound message has no item on its thread, the analyze worker asks `findBestMatch`: a deterministic scorer (`score.ts`, pure) compares it with every open item in the organization whose first message is in a different source and within 24 hours. Four weighted signals: time (0.2), sender (0.2), shared reference numbers such as `#48213` or `INV-0042` (0.25), wording overlap (0.35). Time and sender alone can never reach the threshold: without a shared reference or real wording overlap the score is capped below it. Only the single best match at or above `SHOW_THRESHOLD` (0.45) becomes a candidate; anything lower simply starts its own item. The stored rationale holds counts and numbers only, never message text or the reference numbers themselves.
+
+**Advisory verdict.** For a match, the Correlation Analyzer (analyzer 8, advisory, golden-set tested including embedded-instruction traps) says yes, no or unsure with verbatim evidence. It can only *suppress*: a confident "no" keeps the message out of the queue (it starts its own item, the cheap mistake). Yes, unsure, or an unusable answer all go to a person, and a failed advisory run records itself without queueing its own review task.
+
+**Waiting.** The candidate gets one `CORRELATION` review task, and the message gets no item until a person decides. A second message in the same waiting thread joins the open question (no second model call, no second task). The job is idempotent: `(subject, target)` is unique, so a replay asks once.
+
+**Deciding (people only).** `confirmCandidate`, `rejectCandidate`, `splitCandidate` need the review role plus `item:act` on the target item's team, and the candidate is shown only to people who may view both that item and the team the message arrived for. Exactly one of several simultaneous deciders wins. Each decision is audited in the same transaction.
+- *Confirm* attaches every message of the other thread to the item as `ItemMessageLink` rows with role `OTHER`. No second item is created, and **no state or metric changes** (a link is not a transition). From then on our replies in that thread act on the item (`findLinkedItem`), and the customer's chatter is skipped like any other inbound message on an open item. Refused if the item is closed.
+- *Reject* records that they are separate; the message goes on to start its own item, and that pair is never asked about again.
+- *Split* undoes a confirmation (and counts as a rejection). It is refused once messages from the thread drove the item's lifecycle: such a link's role is upgraded from `OTHER` when it first cites a transition, and history is never rewritten.
+
+**Follow-up.** A decision queues a durable `correlation-follow-up` job (ids only): a rejection or split re-analyzes the message so it starts its own item; a confirmation analyzes our earlier replies in the attached thread against the item. The candidate is stamped (`followUpAt`) only after every job was queued. If the queue is unreachable the decision still stands, the person is told, and the review page offers a safe retry. The generic review "resolve" and "dismiss" refuse a correlation task (`DECISION_REQUIRED`): closing the task without deciding would leave the message waiting forever.
+
+**Known limits.** Only the single best candidate is offered. Two items that already exist separately and turn out to be duplicates are *not* merged (that would change lifecycle semantics: timers, metrics, state); this sprint covers messages that would otherwise start a new item. The candidate pool is the 300 most recently created open items, then filtered by message time. The scorer's wording signal is lexical, so a paraphrase with no shared reference can score low and simply start its own item. Thresholds are constants, not per-organization settings.
 
 ## 6. Multi-tenancy
 

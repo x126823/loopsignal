@@ -115,6 +115,22 @@
         "support": 16,
         "coverage": 0.8
       }
+    },
+    "correlation_analyzer": {
+      "promptVersion": "1",
+      "total": 18,
+      "answered": 18,
+      "abstained": 0,
+      "accuracy": 0.611,
+      "precision": 1,
+      "recall": 0.667,
+      "f1": 0.8,
+      "calibration": {
+        "threshold": null,
+        "precision": null,
+        "support": 0,
+        "coverage": 0
+      }
     }
   }
 }

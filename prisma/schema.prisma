@@ -425,9 +425,14 @@ model CorrelationCandidate {
   rationale      Json
   status         CandidateStatus @default(PENDING)
   decidedBy      String?         @db.Uuid
+  decidedAt      DateTime?       @db.Timestamptz(3)
+  /// Set once the follow-up work for a decision (creating the item for a rejection, catching up replies for a confirmation) was queued.
+  followUpAt     DateTime?       @db.Timestamptz(3)
   createdAt      DateTime        @default(now()) @db.Timestamptz(3)
   targetItem     TrackedItem     @relation(fields: [organizationId, targetItemId], references: [organizationId, id])
 
+  /// One candidate per (subject message, target item): re-analysis can never queue the same question twice.
+  @@unique([organizationId, subjectType, subjectId, targetItemId])
   @@index([organizationId, status])
   @@index([organizationId, targetItemId])
 }

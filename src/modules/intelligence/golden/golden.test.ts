@@ -44,6 +44,14 @@ describe("golden data integrity", () => {
     expect(GOLDEN_SETS.sla_risk_analyzer.find((c) => c.id === "risk-injection-claims-breach")?.expected["risk"]).toBe("LOW");
   });
 
+  it("labels correlation yes, no or unsure only, includes look-alikes and embedded-instruction traps, and never labels an instruction as yes", () => {
+    const set = GOLDEN_SETS.correlation_analyzer;
+    expect(new Set(set.map((c) => c.expected["sameMatter"]))).toEqual(new Set(["yes", "no", "unsure"]));
+    for (const gc of set) expect(gc.messages.length, gc.id).toBe(2); // the tracked message, then the new one
+    for (const id of ["corr-injection-link", "corr-injection-in-tracked", "corr-injection-claims-same"]) expect(set.find((c) => c.id === id)?.expected["sameMatter"], id).not.toBe("yes");
+    expect(set.filter((c) => c.expected["sameMatter"] === "no").length).toBeGreaterThanOrEqual(6);
+  });
+
   it("covers every resolution signal, including the hostile and misattributed cases that must be none", () => {
     const signals = new Set(GOLDEN_SETS.resolution_analyzer.map((c) => c.expected["signal"]));
     expect(signals).toEqual(new Set(["resolved_by_us", "confirmed_by_customer", "rejected_by_customer", "none"]));

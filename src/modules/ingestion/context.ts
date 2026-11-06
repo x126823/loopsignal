@@ -67,3 +67,34 @@ export async function loadThreadMessages(organizationId: string, threadId: strin
     }));
   });
 }
+
+export interface MessageFeaturesView {
+  id: string;
+  threadId: string;
+  monitoredSourceId: string;
+  provider: "GMAIL" | "GOOGLE_CHAT" | "SYNTHETIC";
+  direction: "INBOUND" | "OUTBOUND" | "INTERNAL";
+  sentAt: Date;
+  subject: string | null;
+  senderAddress: string | null;
+  senderName: string | null;
+  /** Decrypted body, for in-memory scoring only. Never log it, store it, or put it in a job payload (rule 10). */
+  text: string;
+}
+
+/** Messages with their text decrypted, for the correlation scorer. Missing ids are simply absent from the result. */
+export async function loadMessageFeatures(organizationId: string, messageIds: string[], opts: { fieldKey?: Buffer } = {}): Promise<MessageFeaturesView[]> {
+  if (messageIds.length === 0) return [];
+  const key = opts.fieldKey ?? parseFieldKey(getEnv().FIELD_ENCRYPTION_KEY);
+  return withTenant({ organizationId }, async (tx) => {
+    const rows = await tx.message.findMany({ where: { id: { in: messageIds } } });
+    const senders = await tx.participant.findMany({ where: { id: { in: rows.flatMap((r) => (r.senderParticipantId ? [r.senderParticipantId] : [])) } } });
+    const byId = new Map(senders.map((s) => [s.id, s]));
+    return rows.map((r) => ({
+      id: r.id, threadId: r.threadId, monitoredSourceId: r.monitoredSourceId, provider: r.provider, direction: r.direction, sentAt: r.sentAt, subject: r.subject,
+      senderAddress: r.senderParticipantId ? (byId.get(r.senderParticipantId)?.address ?? null) : null,
+      senderName: r.senderParticipantId ? (byId.get(r.senderParticipantId)?.displayName ?? null) : null,
+      text: decryptField(r.bodyText, key, `${organizationId}:Message.bodyText`),
+    }));
+  });
+}

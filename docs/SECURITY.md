@@ -50,7 +50,7 @@
 - Message edits/deletes and threading differ from email; normalization must tolerate this.
 
 **Correlation**
-- A false merge hides work (worse than a false split). Uncertain matches always go to human review; merges and splits are audited and reversible.
+- A false merge hides work (worse than a false split). Every match, however strong, goes to human review: there is no auto-link. Decisions are audited, reversible by a split until the attached conversation has moved the item forward, and limited to people who may act on the item and see the message. The advisory model can only suppress a candidate, never link one. Stored rationale holds counts only, not message text.
 
 **AI quality**
 - Models can misjudge ack vs. substantive, or "resolved" from polite closings. Mitigated by confidence thresholds, human gates, golden sets, and tracking reviewer overrides as a quality signal.

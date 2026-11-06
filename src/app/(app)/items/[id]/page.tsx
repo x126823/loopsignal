@@ -13,14 +13,15 @@ import { systemClock } from "@/lib/clock";
 import { can } from "@/modules/identity";
 import { loadThreadMessages } from "@/modules/ingestion";
 import { listItemAnalysis } from "@/modules/intelligence";
-import { getApprovalPolicy, getItemDetail } from "@/modules/lifecycle";
+import { listCandidates } from "@/modules/correlation";
+import { getApprovalPolicy, getItemDetail, listLinkedThreadIds } from "@/modules/lifecycle";
 import { getItemTimers } from "@/modules/sla";
 import { listTeamCandidates } from "@/modules/tenancy";
 import { availableTransitions, canDecideApproval, transitionButtonLabel } from "../../../_lib/available-actions";
 import { parseNotice } from "../../../_lib/notices";
 import { currentTimers, RISK_LABEL, RISK_TONE, riskHint, TIMER_LABEL, TIMER_STATE_LABEL, TIMER_STATE_TONE } from "../../../_lib/sla-display";
 import { requireContext } from "../../../_lib/session";
-import { assignOwnerAction, decideApprovalAction, transitionAction } from "../../actions";
+import { assignOwnerAction, decideApprovalAction, splitCorrelationAction, transitionAction } from "../../actions";
 
 const DIRECTION_LABEL = { INBOUND: "From outside", OUTBOUND: "Our team", INTERNAL: "Internal" } as const;
 
@@ -51,6 +52,9 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
     canAct ? listTeamCandidates(ctx.org.id, item.teamId) : Promise.resolve([]),
     getItemTimers(ctx.principal, item.id, { clock: systemClock }),
   ]);
+  // Conversations a person attached from another channel (for example a Chat thread about the same outage as this email).
+  const linkedThreads = await Promise.all((await listLinkedThreadIds(ctx.org.id, item.id)).map(async (t) => ({ threadId: t, messages: await loadThreadMessages(ctx.org.id, t) })));
+  const attached = linkedThreads.length > 0 ? await listCandidates(ctx.principal, { status: "CONFIRMED", itemId: item.id }) : [];
   const timers = currentTimers(allTimers ?? []);
   const risk = riskHint(timers, analyses);
   // The recommendations list is about decisions; the risk hint has its own place in the deadlines card.
@@ -142,6 +146,35 @@ export default async function ItemPage({ params, searchParams }: { params: Promi
               ))}
             </CardContent>
           </Card>
+
+          {linkedThreads.map((lt) => {
+            const cand = attached.find((c) => c.subject.threadId === lt.threadId);
+            return (
+              <Card key={lt.threadId} data-testid="linked-thread">
+                <CardHeader>
+                  <CardTitle>From another channel</CardTitle>
+                  <CardDescription>A person attached this conversation to the item. {lt.messages.length} message{lt.messages.length === 1 ? "" : "s"}, oldest first.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  {lt.messages.map((m) => (
+                    <article key={m.id} className="rounded-md border border-border p-3" data-testid="linked-message">
+                      <header className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge tone={m.direction === "INBOUND" ? "neutral" : "info"}>{DIRECTION_LABEL[m.direction]}</Badge>
+                        <span>{m.senderName ?? m.senderAddress ?? "Unknown sender"}</span>
+                        <time dateTime={m.sentAt.toISOString()}>{formatDateTime(m.sentAt)}</time>
+                      </header>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-sm">{m.text}</p>
+                    </article>
+                  ))}
+                  {cand?.canDecide && (
+                    <ActionForm action={splitCorrelationAction} fields={{ candidateId: cand.id, from: "item", itemId: item.id }} showNote={false} variant="outline"
+                      summary="Not the same matter: detach this conversation" submitLabel="Detach"
+                      description="The conversation is removed from this item and its first message is tracked as its own item. Refused if it has already moved this item forward." />
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
 
           <Card>
             <CardHeader>
